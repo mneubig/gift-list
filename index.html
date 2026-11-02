@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gift List</title>
+<meta name="theme-color" content="#b4234a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Gift <span>List</span></h1>
+      <div class="sub num"><span id="countdown"></span> · <span class="sync" id="sync">Not connected</span></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b class="num" id="spent">$0</b><small>Spent</small></div>
+      <div class="stat"><b class="num" id="todo">0</b><small>Still need a gift</small></div>
+      <div class="stat"><b class="num" id="links">0</b><small>Links to check</small></div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-view="people">People</button>
+    <button class="tab" role="tab" data-view="inbox">Inbox <span class="count" id="inboxCount" hidden></span></button>
+    <button class="tab" role="tab" data-view="shop">Shopping list</button>
+    <button class="tab" role="tab" data-view="settings">Settings</button>
+  </nav>
+
+  <main id="view"></main>
+</div>
+
+<button class="fab" id="fab" aria-label="New gift idea">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+</button>
+
+<div class="scrim" id="captureScrim" hidden>
+  <form class="sheet" id="captureForm" role="dialog" aria-labelledby="captureTitle">
+    <h2 id="captureTitle">New gift idea</h2>
+    <div class="rec">
+      <button type="button" id="micBtn" aria-label="Start talking">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <div class="sub" id="micHint">Tap and say who it's for and what it is. Name a store to get a link.</div>
+    </div>
+    <textarea id="memoText" placeholder="Leo wants the Lego orchid set from Target"></textarea>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="captureCancel">Cancel</button>
+      <button type="submit" class="btn" id="captureSave">Save idea</button>
+    </div>
+  </form>
+</div>
+
+<div class="scrim" id="editScrim" hidden>
+  <form class="sheet" id="editForm" role="dialog" aria-labelledby="editTitle">
+    <h2 id="editTitle">Edit gift</h2>
+    <label class="field">Gift<input id="editWhat" required></label>
+    <label class="field">For<select id="editPerson"></select></label>
+    <div class="two">
+      <label class="field">Price<input id="editPrice" inputmode="decimal" placeholder="Optional"></label>
+      <label class="field">Status<select id="editStatus"><option value="idea">Idea</option><option value="bought">Bought</option><option value="wrapped">Wrapped</option></select></label>
+    </div>
+    <label class="field">Link<input id="editLink" type="url" placeholder="https://"></label>
+    <label class="field">Note<input id="editNote"></label>
+    <div class="actions">
+      <button type="button" class="btn danger" id="editDelete">Delete</button>
+      <span class="grow"></span>
+      <button type="button" class="btn ghost" id="editCancel">Cancel</button>
+      <button type="submit" class="btn">Save</button>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
