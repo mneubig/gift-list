@@ -61,6 +61,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .chip.idea{background:var(--gold-soft);color:var(--gold)}
 .chip.bought{background:var(--mint-soft);color:var(--pine)}
 .chip.wrapped{background:var(--berry-soft);color:var(--berry)}
+.chip.give{background:var(--mint-soft);color:var(--pine)}
+.field[hidden]{display:none}
 .tag{font-size:.7rem;color:var(--berry);font-weight:600}
 .empty{color:var(--muted);font-size:.88rem;padding:6px 0}
 

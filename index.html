@@ -28,6 +28,7 @@
 
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-view="people">People</button>
+    <button class="tab" role="tab" data-view="ages">By age</button>
     <button class="tab" role="tab" data-view="inbox">Inbox <span class="count" id="inboxCount" hidden></span></button>
     <button class="tab" role="tab" data-view="shop">Shopping list</button>
     <button class="tab" role="tab" data-view="settings">Settings</button>
@@ -64,7 +65,7 @@
     <label class="field">For<select id="editPerson"></select></label>
     <div class="two">
       <label class="field">Price<input id="editPrice" inputmode="decimal" placeholder="Optional"></label>
-      <label class="field">Status<select id="editStatus"><option value="idea">Idea</option><option value="bought">Bought</option><option value="wrapped">Wrapped</option></select></label>
+      <label class="field" id="editStatusField">Status<select id="editStatus"><option value="idea">Idea</option><option value="bought">Bought</option><option value="wrapped">Wrapped</option></select></label>
     </div>
     <label class="field">Link<input id="editLink" type="url" placeholder="https://"></label>
     <label class="field">Note<input id="editNote"></label>

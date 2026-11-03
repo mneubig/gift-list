@@ -30,11 +30,35 @@ let data = JSON.parse(saved.get("gl_cache") || "null") || { people: [], items: [
 let pending = []; // open GitHub issues = ideas still being filed
 let view = saved.get("gl_view") || "people";
 let pasteOpen = null;
+let giveOpen = null;
 let pollTimer = null;
 
+// Age lists hold go-to gifts for kids of an age. Their ideas are items with `age` set instead of `person`.
+const DEFAULT_AGES = [{ id: "baby", label: "Baby" }, ...[1, 2, 3, 4, 5, 6].map((n) => ({ id: String(n), label: `Age ${n}` }))];
+const ageRank = (a) => (a.id === "baby" ? -1 : isNaN(+a.id) ? 1000 : +a.id);
+const ages = () => [...(data.ages || DEFAULT_AGES)].sort((a, b) => ageRank(a) - ageRank(b));
+const ageLabel = (id) => ages().find((a) => a.id === id)?.label;
+const isAgeIdea = (i) => Boolean(i.age && ageLabel(i.age));
+
 const personName = (id) => data.people.find((p) => p.id === id)?.name;
-const isInbox = (i) => !i.person || !personName(i.person);
+const isInbox = (i) => !isAgeIdea(i) && (!i.person || !personName(i.person));
 const byId = (d, id) => d.items.find((i) => i.id === id);
+
+// "Who or what is it for" picker values: p:<person id> or a:<age id>
+function forOptions(withInbox) {
+  const people = data.people.map((p) => `<option value="p:${p.id}">${esc(p.name)}</option>`).join("");
+  const ageOpts = ages().map((a) => `<option value="a:${a.id}">${esc(a.label)}</option>`).join("");
+  return (withInbox ? `<option value="">Inbox</option>` : "") +
+    (people ? `<optgroup label="People">${people}</optgroup>` : "") +
+    `<optgroup label="Age lists">${ageOpts}</optgroup>`;
+}
+function assignTo(it, value) {
+  const [kind, id] = value ? [value.slice(0, 1), value.slice(2)] : [];
+  it.person = kind === "p" ? id : null;
+  it.age = kind === "a" ? id : null;
+  if (it.age) it.status = "idea";
+}
+const forValue = (it) => (isAgeIdea(it) ? "a:" + it.age : it.person && personName(it.person) ? "p:" + it.person : "");
 
 // ---------- GitHub ----------
 async function gh(path, opts = {}) {
@@ -151,8 +175,9 @@ function stats() {
   const xmas = new Date(new Date().getFullYear(), 11, 25);
   const days = Math.ceil((xmas - new Date()) / 864e5);
   $("countdown").textContent = days > 0 ? `${days} days until Dec 25` : "Happy holidays";
-  $("spent").textContent = money(data.items.filter((i) => i.status !== "idea").reduce((a, i) => a + (Number(i.price) || 0), 0));
-  const covered = new Set(data.items.filter((i) => i.status !== "idea").map((i) => i.person));
+  const bought = data.items.filter((i) => i.status !== "idea" && !isAgeIdea(i));
+  $("spent").textContent = money(bought.reduce((a, i) => a + (Number(i.price) || 0), 0));
+  const covered = new Set(bought.map((i) => i.person));
   $("todo").textContent = `${data.people.filter((p) => !covered.has(p.id)).length} of ${data.people.length}`;
   $("links").textContent = data.items.filter((i) => ["pending", "notfound"].includes(i.link?.state)).length;
   const inboxN = data.items.filter(isInbox).length + pending.length;
@@ -188,11 +213,22 @@ function itemRow(i, showWho) {
   if (i.note) bits.push(esc(i.note));
   if (i.source === "voice") bits.push("<span class='tag'>voice</span>");
   if (i.source === "shared") bits.push("<span class='tag'>shared</span>");
+  const age = isAgeIdea(i);
+  const chip = age
+    ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>`
+    : `<button class="chip ${i.status}" data-cycle="${i.id}" title="Tap to change status">${i.status}</button>`;
   return `<li class="item">
     <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
-    <button class="chip ${i.status}" data-cycle="${i.id}" title="Tap to change status">${i.status}</button>
-    ${linkBox(i)}</li>`;
+    ${chip}
+    ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}</li>`;
+}
+
+function giveBox(i) {
+  if (!data.people.length) return `<div class="found"><div class="meta">Add people on the People tab first.</div></div>`;
+  const opts = data.people.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  return `<div class="found"><div class="lbl">Add to this year's list</div>
+    <div class="row"><select id="give-${i.id}" aria-label="Who is it for">${opts}</select><button class="btn" data-givesave="${i.id}">Add</button></div></div>`;
 }
 
 function pendingRows() {
@@ -218,16 +254,26 @@ function render() {
       ? `<div class="panel"><h2>Start your list</h2><p>Tap the mic and say something like "Mom would love the linen apron from Anthropologie." She'll be added, and the link is found for you.</p></div>`
       : "";
     v.innerHTML = banner + intro + `<div class="grid">${cards}${add}</div>`;
+  } else if (view === "ages") {
+    const cards = ages().map((a) => {
+      const its = data.items.filter((i) => i.age === a.id);
+      return `<article class="panel"><div class="phead"><h3>${esc(a.label)}</h3><span class="budget num">${its.length} idea${its.length === 1 ? "" : "s"}</span></div>
+        <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No go-to gifts yet</li>"}</ul>
+        <form class="row addAgeIdea" data-age="${esc(a.id)}" style="margin-top:8px"><input placeholder="Add a gift" aria-label="Add a gift for ${esc(a.label)}"><button class="btn ghost">Add</button></form></article>`;
+    }).join("");
+    const add = `<form class="panel" id="addAge"><h3>Add an age</h3><div class="row" style="margin-top:8px"><input id="newAge" placeholder="7, or a label like Teen" aria-label="Age"><button class="btn">Add</button></div></form>`;
+    const intro = `<p class="meta" style="margin:0 0 12px">Your go-to gifts for each age, kept year to year. Tap <b>Give</b> to add one to someone's list. Or tap the mic and say "a good gift for 2 year olds is the Melissa and Doug band set from Target."</p>`;
+    v.innerHTML = intro + `<div class="grid">${cards}${add}</div>`;
   } else if (view === "inbox") {
-    const opts = data.people.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+    const opts = forOptions(false);
     const items = data.items.filter(isInbox).map((i) => `<div class="panel">
       <ul class="items">${itemRow(i)}</ul>
       ${i.raw && i.raw !== i.what ? `<p class="meta" style="margin:6px 0 8px">You said: “${esc(i.raw)}”</p>` : ""}
-      <div class="row">${opts ? `<select id="file-${i.id}" aria-label="Who is it for">${opts}</select><button class="btn" data-file="${i.id}">File it</button>` : `<span class="meta">Add people on the People tab to file this.</span>`}
+      <div class="row"><select id="file-${i.id}" aria-label="Who is it for">${opts}</select><button class="btn" data-file="${i.id}">File it</button>
       <button class="btn danger" data-drop="${i.id}">Delete</button></div></div>`).join("");
     v.innerHTML = pendingRows() + (items || (pending.length ? "" : `<p class="empty">Inbox is clear. Ideas that don't name anyone and pages you share land here.</p>`));
   } else if (view === "shop") {
-    const todo = data.items.filter((i) => i.status === "idea");
+    const todo = data.items.filter((i) => i.status === "idea" && !isAgeIdea(i));
     v.innerHTML = `<div class="panel"><div class="phead"><h3>Still to buy</h3><span class="budget num">${todo.length} idea${todo.length === 1 ? "" : "s"}</span></div>
       <ul class="items">${todo.map((i) => itemRow(i, true)).join("") || "<li class='empty'>Everything is bought.</li>"}</ul></div>`;
   } else {
@@ -248,6 +294,10 @@ function render() {
         ${data.people.map((p) => `<div class="row"><span style="flex:1">${esc(p.name)}</span><button class="btn danger" data-unperson="${p.id}">Remove</button></div>`).join("") || "<p>No one yet. Add people on the People tab, or just name them when you add an idea.</p>"}
       </div>
       <div class="panel settings">
+        <h2>Age lists</h2>
+        ${ages().map((a) => `<div class="row"><span style="flex:1">${esc(a.label)}</span><button class="btn danger" data-unage="${esc(a.id)}">Remove</button></div>`).join("")}
+      </div>
+      <div class="panel settings">
         <h2>Send pages from your computer</h2>
         <p>Drag this button to your bookmarks bar. On any product page, click it to add that page to your inbox.</p>
         <div><a class="bookmarklet" href="${esc(mark)}">Add to Gift List</a></div>
@@ -263,7 +313,7 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson]");
+  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -305,9 +355,28 @@ document.addEventListener("click", (e) => {
     });
     toast("Link saved");
   } else if (d.file) {
-    const person = $("file-" + d.file).value;
-    commit("File idea", (x) => { const it = byId(x, d.file); if (it) it.person = person; });
-    toast("Filed under " + personName(person));
+    const to = $("file-" + d.file).value;
+    commit("File idea", (x) => { const it = byId(x, d.file); if (it) assignTo(it, to); });
+    toast("Filed under " + (personName(to.slice(2)) || ageLabel(to.slice(2))));
+  } else if (d.give) {
+    giveOpen = giveOpen === d.give ? null : d.give;
+    render();
+  } else if (d.givesave) {
+    const person = $("give-" + d.givesave).value;
+    giveOpen = null;
+    // Copies the idea onto the person's list; the age list keeps its own copy for next time
+    commit("Give age idea", (x) => {
+      const src = byId(x, d.givesave);
+      if (src) x.items.push({ ...structuredClone(src), id: newId(), person, age: null, status: "idea", created: new Date().toISOString() });
+    });
+    toast("Added to " + personName(person) + "'s list");
+  } else if (d.unage) {
+    const n = data.items.filter((i) => i.age === d.unage).length;
+    if (n && !confirm(`Remove ${ageLabel(d.unage)}? Its ${n} idea${n > 1 ? "s" : ""} will move to the inbox.`)) return;
+    commit("Remove age list", (x) => {
+      x.ages = (x.ages || DEFAULT_AGES).filter((a) => a.id !== d.unage);
+      x.items.forEach((i) => { if (i.age === d.unage) i.age = null; });
+    });
   } else if (d.drop) {
     commit("Delete idea", (x) => { x.items = x.items.filter((i) => i.id !== d.drop); });
   } else if (d.edit) openEdit(d.edit);
@@ -321,7 +390,28 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("submit", async (e) => {
-  if (e.target.id === "addPerson") {
+  if (e.target.classList.contains("addAgeIdea")) {
+    e.preventDefault();
+    const input = e.target.querySelector("input");
+    const what = input.value.trim();
+    const age = e.target.dataset.age;
+    if (!what) return;
+    commit(`Add idea for ${ageLabel(age)}`, (x) => {
+      x.ages ||= structuredClone(DEFAULT_AGES);
+      x.items.push({ id: newId(), person: null, age, what, note: "", status: "idea", price: null, source: "typed", raw: what, created: new Date().toISOString(), link: { state: "none", hits: [], i: 0, rejected: [] } });
+    });
+  } else if (e.target.id === "addAge") {
+    e.preventDefault();
+    const text = $("newAge").value.trim();
+    if (!text) return;
+    const id = /^\d+$/.test(text) ? text : slug(text);
+    const label = /^\d+$/.test(text) ? `Age ${text}` : text;
+    if (ageLabel(id)) { toast(`${label} is already there`); return; }
+    commit(`Add ${label}`, (x) => {
+      x.ages ||= structuredClone(DEFAULT_AGES);
+      if (!x.ages.some((a) => a.id === id)) x.ages.push({ id, label });
+    });
+  } else if (e.target.id === "addPerson") {
     e.preventDefault();
     const name = $("newPerson").value.trim();
     if (!name) return;
@@ -422,8 +512,9 @@ function openEdit(id) {
   if (!it) return;
   editing = id;
   $("editWhat").value = it.what;
-  $("editPerson").innerHTML = `<option value="">Inbox</option>` + data.people.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
-  $("editPerson").value = it.person && personName(it.person) ? it.person : "";
+  $("editPerson").innerHTML = forOptions(true);
+  $("editPerson").value = forValue(it);
+  syncStatusField();
   $("editPrice").value = it.price ?? "";
   $("editStatus").value = it.status;
   $("editLink").value = it.link?.state === "ok" ? it.link.url || "" : "";
@@ -431,6 +522,9 @@ function openEdit(id) {
   $("editScrim").hidden = false;
 }
 const closeEdit = () => { $("editScrim").hidden = true; editing = null; };
+// Age-list ideas are never bought themselves, so they have no status
+function syncStatusField() { $("editStatusField").hidden = $("editPerson").value.startsWith("a:"); }
+$("editPerson").onchange = syncStatusField;
 $("editCancel").onclick = closeEdit;
 $("editScrim").addEventListener("click", (e) => { if (e.target.id === "editScrim") closeEdit(); });
 $("editDelete").onclick = () => {
@@ -445,17 +539,18 @@ $("editForm").addEventListener("submit", (e) => {
   const priceText = $("editPrice").value.replace(/[$,\s]/g, "");
   const fields = {
     what: $("editWhat").value.trim(),
-    person: $("editPerson").value || null,
     price: priceText === "" || isNaN(+priceText) ? null : +priceText,
     status: $("editStatus").value,
     note: $("editNote").value.trim(),
   };
+  const to = $("editPerson").value;
   const url = $("editLink").value.trim();
   closeEdit();
   commit("Edit idea", (x) => {
     const it = byId(x, id);
     if (!it) return;
     Object.assign(it, fields);
+    assignTo(it, to);
     const had = it.link?.state === "ok" ? it.link.url : "";
     if (url && url !== had) it.link = { ...(it.link || {}), state: "ok", url, store: host(url) };
     else if (!url && had) it.link = { state: "none", hits: [], i: 0, rejected: it.link.rejected || [] };
