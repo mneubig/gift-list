@@ -95,16 +95,43 @@ function setSync(text, state) {
   el.className = "sync " + (state || "");
 }
 
+// "1" while this device has changes GitHub doesn't have yet. Unset means a copy from before this
+// flag existed, so anything in it is treated as not backed up.
+const isDirty = () => (saved.get("gl_dirty") ?? (data.people.length || data.items.length ? "1" : "0")) === "1";
+const setDirty = (on) => saved.set("gl_dirty", on ? "1" : "0");
+
+// Folds this device's copy into GitHub's: anything only here is added, and this device's version
+// wins for anything in both. Safe to run twice.
+function mergeInto(x, local) {
+  const defaults = { people: [], items: [], groups: DEFAULT_GROUPS, ages: DEFAULT_AGES };
+  for (const key of Object.keys(defaults)) {
+    if (!local[key]) continue;
+    x[key] ||= structuredClone(defaults[key]);
+    for (const e of local[key]) {
+      const at = x[key].findIndex((y) => y.id === e.id);
+      if (at < 0) x[key].push(structuredClone(e));
+      else x[key][at] = structuredClone(e);
+    }
+  }
+}
+
 async function load() {
   clearTimeout(pollTimer);
-  if (!cfg.token) { setSync("Not connected", "err"); render(); return; }
+  if (!cfg.token) { setSync("Not backed up", "err"); render(); return; }
   setSync("Syncing…", "busy");
   try {
     const [file, issues] = await Promise.all([gh("/contents/data.json"), gh("/issues?state=open&per_page=50")]);
-    data = JSON.parse(fromB64(file.content));
     pending = issues.filter((i) => !i.pull_request);
-    saved.set("gl_cache", JSON.stringify(data));
-    setSync("Synced", "ok");
+    if (isDirty()) {
+      // Never replace unsaved local changes with GitHub's copy: merge them in and save
+      const local = data;
+      data = JSON.parse(fromB64(file.content));
+      await commit("Back up changes from this device", (x) => mergeInto(x, local));
+    } else {
+      data = JSON.parse(fromB64(file.content));
+      saved.set("gl_cache", JSON.stringify(data));
+      setSync("Synced", "ok");
+    }
   } catch (e) {
     setSync(e.status === 401 ? "Token rejected. Check Settings." : e.status === 404 ? "Repo not found. Check Settings." : "Offline. Showing last sync.", "err");
   }
@@ -118,6 +145,7 @@ let saveQueue = Promise.resolve();
 function commit(message, mutate) {
   mutate(data);
   saved.set("gl_cache", JSON.stringify(data));
+  setDirty(true);
   render();
   if (!cfg.token) return saveQueue;
   saveQueue = saveQueue.then(async () => {
@@ -133,15 +161,22 @@ function commit(message, mutate) {
         });
         data = fresh;
         saved.set("gl_cache", JSON.stringify(data));
+        setDirty(false);
         setSync("Synced", "ok");
         render();
         return;
       } catch (e) {
-        if (e.status !== 409 && e.status !== 422) break;
+        if (e.status !== 409 && e.status !== 422) {
+          const why = e.status === 401 ? "the token was rejected" : e.status === 403 || e.status === 404 ? "the token can't write to the data repo (check its Contents permission)" : "GitHub couldn't be reached";
+          setSync("Not backed up", "err");
+          toast(`Saved on this device only: ${why}. It'll back up on the next sync.`);
+          render();
+          return;
+        }
       }
     }
-    setSync("Not saved. Check your connection.", "err");
-    toast("Couldn't save that change to GitHub. Reload to see what was saved.");
+    setSync("Not backed up", "err");
+    toast("Saved on this device only. It'll back up on the next sync.");
   });
   return saveQueue;
 }
@@ -340,16 +375,35 @@ function render() {
         <p>Open this page in Chrome, tap the menu, then <b>Add to Home screen</b> and choose <b>Install</b>.</p>
         <p>Long-press the Gift List icon and drag <b>Voice idea</b> to your home screen for a one-tap mic button.</p>
         <p>In Amazon or any app, tap <b>Share</b> and pick <b>Gift List</b> to send a product straight to your inbox.</p>
+      </div>
+      <div class="panel settings">
+        <h2>Backup</h2>
+        <p>Once you're connected, every change is saved to your private <b>${esc(cfg.repo)}</b> repo on GitHub. Every device you connect sees the same list, and app updates never touch it. GitHub keeps every past version${cfg.token ? ` in the <a href="https://github.com/${esc(cfg.owner)}/${esc(cfg.repo)}/commits/main/data.json" target="_blank" rel="noopener">history</a>` : ""}.</p>
+        <div class="row"><button class="btn ghost" data-export="1">Download a copy</button><label class="btn ghost">Restore from a copy<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>
+        <p class="meta">Restoring adds what's in the file to your list. It doesn't delete anything.</p>
       </div>`;
+  }
+  // Loud reminder whenever this device has changes GitHub doesn't
+  if (view !== "settings" && (!cfg.token || isDirty())) {
+    v.insertAdjacentHTML("afterbegin", `<div class="warn">${cfg.token ? "Some changes are only on this device so far. They'll back up on the next sync." : "Your list is only saved on this device."}
+      ${cfg.token ? `<button class="btn ghost" data-resync="1">Sync now</button>` : `<button class="btn" data-view="settings">Connect GitHub to back it up</button>`}</div>`);
   }
 }
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor]");
+  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-resync]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
+  else if (d.resync) load();
+  else if (d.export) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = `gift-list-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
   else if (d.group !== undefined) { groupFilter = d.group; saved.set("gl_group", groupFilter); render(); }
   else if (d.gcolor) {
     const keys = Object.keys(COLORS);
@@ -627,7 +681,20 @@ $("editForm").addEventListener("submit", (e) => {
   });
 });
 
-document.addEventListener("change", (e) => {
+document.addEventListener("change", async (e) => {
+  if (e.target.id === "importFile") {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const copy = JSON.parse(await file.text());
+      if (!Array.isArray(copy.people) || !Array.isArray(copy.items)) throw new Error();
+      commit("Restore from a copy", (x) => mergeInto(x, copy));
+      toast(`Restored ${copy.people.length} people and ${copy.items.length} ideas`);
+    } catch {
+      toast("That file isn't a Gift List copy");
+    }
+    return;
+  }
   const id = e.target.dataset?.persongroup;
   if (!id) return;
   const group = e.target.value || null;
