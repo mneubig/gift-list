@@ -18,7 +18,8 @@ const toB64 = (s) => {
   return btoa(bin);
 };
 const fromB64 = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
-const APP_URL = location.origin + location.pathname.replace(/index\.html$/, "");
+const stripFor = (s) => s.replace(/^\[for:[^\]]*\]\s*/, "");
+const APP_URL =location.origin + location.pathname.replace(/index\.html$/, "");
 
 // ---------- state ----------
 const cfg = {
@@ -153,7 +154,7 @@ async function sendIdea(kind, body) {
     return false;
   }
   try {
-    const title = `[${kind}] ${body.replace(/\s+/g, " ").slice(0, 60)}`;
+    const title = `[${kind}] ${stripFor(body).replace(/\s+/g, " ").slice(0, 60)}`;
     const issue = await gh("/issues", { method: "POST", body: JSON.stringify({ title, body }) });
     pending.unshift(issue);
     render();
@@ -244,7 +245,7 @@ function giveBox(i) {
 }
 
 function pendingRows() {
-  return pending.map((p) => `<div class="pending"><span class="spinner"></span><span>Filing <q>${esc((p.body || p.title).split("\n")[0].slice(0, 120))}</q></span></div>`).join("");
+  return pending.map((p) => `<div class="pending"><span class="spinner"></span><span>Filing <q>${esc(stripFor(p.body || p.title).split("\n")[0].slice(0, 120))}</q></span></div>`).join("");
 }
 
 function render() {
@@ -258,8 +259,10 @@ function render() {
     const card = (p) => {
       const its = data.items.filter((i) => i.person === p.id);
       const spent = its.filter((i) => i.status !== "idea").reduce((a, i) => a + (Number(i.price) || 0), 0);
-      return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${spent ? money(spent) + " spent" : its.some((i) => i.status !== "idea") ? "Bought" : "Nothing bought yet"}</span></div>
-        <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No ideas yet</li>"}</ul></article>`;
+      return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${spent ? money(spent) + " spent" : its.some((i) => i.status !== "idea") ? "Bought" : "Nothing bought yet"}</span>
+        <button class="xbtn" data-unperson="${p.id}" aria-label="Remove ${esc(p.name)}" title="Remove">×</button></div>
+        <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
+        <button class="btn ghost addidea" data-addfor="${p.id}">+ Add idea</button></article>`;
     };
     // One section per group, then anyone without a group
     const sections = [...groups(), { id: "", label: "No group", color: "" }]
@@ -273,11 +276,11 @@ function render() {
     const filters = data.people.length
       ? `<div class="filters">${[{ id: "", label: "Everyone" }, ...groups()].map((g) => `<button class="filter" data-group="${esc(g.id)}" aria-pressed="${g.id === groupFilter}">${g.color ? `<span class="dot" style="--c:${COLORS[g.color]}"></span>` : ""}${esc(g.label)}</button>`).join("")}</div>`
       : "";
-    const add = `<form class="panel" id="addPerson"><h3>Add someone</h3><div class="row" style="margin-top:8px"><input id="newPerson" placeholder="Name" aria-label="Name"><select id="newPersonGroup" aria-label="Group">${groupOptions(groupFilter)}</select><button class="btn">Add</button></div></form>`;
+    const add = `<form class="row addperson" id="addPerson"><input id="newPerson" placeholder="Add someone" aria-label="Name"><select id="newPersonGroup" aria-label="Group">${groupOptions(groupFilter)}</select><button class="btn">Add</button></form>`;
     const intro = !data.people.length && !data.items.length
       ? `<div class="panel"><h2>Start your list</h2><p>Tap the mic and say something like "Mom would love the linen apron from Anthropologie." She'll be added, and the link is found for you.</p></div>`
       : "";
-    v.innerHTML = banner + intro + filters + (sections || (groupFilter ? `<p class="empty">No one in this group yet.</p>` : "")) + `<div class="grid" style="margin-top:14px">${add}</div>`;
+    v.innerHTML = banner + intro + add + filters + (sections || (groupFilter ? `<p class="empty">No one in this group yet.</p>` : ""));
   } else if (view === "ages") {
     const cards = ages().map((a) => {
       const its = data.items.filter((i) => i.age === a.id);
@@ -343,7 +346,7 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup]");
+  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -425,7 +428,10 @@ document.addEventListener("click", (e) => {
   } else if (d.drop) {
     commit("Delete idea", (x) => { x.items = x.items.filter((i) => i.id !== d.drop); });
   } else if (d.edit) openEdit(d.edit);
+  else if (d.addfor) openCapture(true, d.addfor);
   else if (d.unperson) {
+    const n = data.items.filter((i) => i.person === d.unperson).length;
+    if (!confirm(`Remove ${personName(d.unperson)}?${n ? ` Their ${n} idea${n > 1 ? "s" : ""} will move to the inbox.` : ""}`)) return;
     commit("Remove person", (x) => {
       x.people = x.people.filter((p) => p.id !== d.unperson);
       x.items.forEach((i) => { if (i.person === d.unperson) i.person = null; });
@@ -502,11 +508,15 @@ document.addEventListener("submit", async (e) => {
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
 let autoSaveTimer = null;
+let captureFor = null; // person id when opened from a person's card
 
-function openCapture(listenNow) {
+function openCapture(listenNow, personId = null) {
+  captureFor = personId;
+  const name = personName(personId);
+  $("captureTitle").textContent = name ? `Gift idea for ${name}` : "New gift idea";
   $("captureScrim").hidden = false;
   $("memoText").value = "";
-  $("micHint").textContent = "Tap and say who it's for and what it is. Name a store to get a link.";
+  $("micHint").textContent = name ? "Say what it is. Name a store to get a link." : "Tap and say who it's for and what it is. Name a store to get a link.";
   if (listenNow) listen(true);
 }
 function closeCapture() {
@@ -559,9 +569,10 @@ $("captureForm").addEventListener("submit", async (e) => {
   const text = $("memoText").value.trim();
   if (!text) { $("memoText").focus(); return; }
   $("captureSave").disabled = true;
-  const ok = await sendIdea("voice", text);
+  // The [for:id] tag tells the filer who it's for, so it isn't guessed from the words
+  const ok = await sendIdea("voice", captureFor ? `[for:${captureFor}] ${text}` : text);
   $("captureSave").disabled = false;
-  if (ok) { closeCapture(); toast("Saved. It'll be filed in a moment."); }
+  if (ok) { closeCapture(); toast(captureFor ? `Saved for ${personName(captureFor)}. Filling in the details now.` : "Saved. It'll be filed in a moment."); }
 });
 
 // ---------- edit sheet ----------

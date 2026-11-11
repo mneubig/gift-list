@@ -63,7 +63,14 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .chip.wrapped{background:var(--berry-soft);color:var(--berry)}
 .chip.give{background:var(--mint-soft);color:var(--pine)}
 
-.person{border-left:4px solid var(--c)}
+.person{border-left:4px solid var(--c);display:flex;flex-direction:column}
+.person .items{flex:1}
+.addidea{width:100%;margin-top:10px;justify-content:center;text-align:center}
+.person .phead .budget{margin-left:auto}
+.xbtn{border:0;background:none;color:var(--muted);font-size:1.3rem;line-height:1;padding:2px 6px;margin:-4px -8px 0 0;border-radius:6px}
+.xbtn:hover{color:var(--berry);background:var(--berry-soft)}
+.addperson{margin:0 0 14px}
+.addperson input{flex:1;min-width:0}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c);margin-right:6px;vertical-align:baseline}
 .group + .group{margin-top:20px}
 .ghead{display:flex;align-items:center;font-size:1rem;margin:0 0 10px}
