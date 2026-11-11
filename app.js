@@ -40,6 +40,15 @@ const ages = () => [...(data.ages || DEFAULT_AGES)].sort((a, b) => ageRank(a) - 
 const ageLabel = (id) => ages().find((a) => a.id === id)?.label;
 const isAgeIdea = (i) => Boolean(i.age && ageLabel(i.age));
 
+// Groups sort and color-code people. Colors are mid-tones that read on both light and dark backgrounds.
+const COLORS = { red: "#d64545", orange: "#e08a2c", gold: "#c9a227", green: "#3f9a63", teal: "#2a9d9a", blue: "#3b7dd8", purple: "#8a5cc7", pink: "#d0559a", gray: "#8a8f98" };
+const DEFAULT_GROUPS = [{ id: "family", label: "Family", color: "red" }, { id: "friends", label: "Friends", color: "blue" }, { id: "teachers", label: "Teachers", color: "gold" }];
+let groupFilter = saved.get("gl_group") || "";
+const groups = () => data.groups || DEFAULT_GROUPS;
+const groupOf = (p) => groups().find((g) => g.id === p?.group);
+const colorOf = (p) => COLORS[groupOf(p)?.color] || "transparent";
+const groupOptions = (sel) => `<option value="">No group</option>` + groups().map((g) => `<option value="${esc(g.id)}"${g.id === sel ? " selected" : ""}>${esc(g.label)}</option>`).join("");
+
 const personName = (id) => data.people.find((p) => p.id === id)?.name;
 const isInbox = (i) => !isAgeIdea(i) && (!i.person || !personName(i.person));
 const byId = (d, id) => d.items.find((i) => i.id === id);
@@ -208,7 +217,10 @@ function linkBox(i) {
 
 function itemRow(i, showWho) {
   const bits = [];
-  if (showWho) bits.push(esc(personName(i.person) || "Inbox"));
+  if (showWho) {
+    const p = data.people.find((x) => x.id === i.person);
+    bits.push(p ? `<span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}` : "Inbox");
+  }
   if (i.link?.state === "ok" && i.link.url) bits.push(`<a href="${esc(i.link.url)}" target="_blank" rel="noopener">${esc(host(i.link.url))} ↗</a>`);
   if (i.note) bits.push(esc(i.note));
   if (i.source === "voice") bits.push("<span class='tag'>voice</span>");
@@ -243,17 +255,29 @@ function render() {
 
   if (view === "people") {
     const banner = pending.length ? `<div class="pending"><span class="spinner"></span><span>Filing ${pending.length} new idea${pending.length > 1 ? "s" : ""}…</span></div>` : "";
-    const cards = data.people.map((p) => {
+    const card = (p) => {
       const its = data.items.filter((i) => i.person === p.id);
       const spent = its.filter((i) => i.status !== "idea").reduce((a, i) => a + (Number(i.price) || 0), 0);
-      return `<article class="panel"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${spent ? money(spent) + " spent" : its.some((i) => i.status !== "idea") ? "Bought" : "Nothing bought yet"}</span></div>
+      return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${spent ? money(spent) + " spent" : its.some((i) => i.status !== "idea") ? "Bought" : "Nothing bought yet"}</span></div>
         <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No ideas yet</li>"}</ul></article>`;
-    }).join("");
-    const add = `<form class="panel" id="addPerson"><h3>Add someone</h3><div class="row" style="margin-top:8px"><input id="newPerson" placeholder="Name" aria-label="Name"><button class="btn">Add</button></div></form>`;
+    };
+    // One section per group, then anyone without a group
+    const sections = [...groups(), { id: "", label: "No group", color: "" }]
+      .filter((g) => !groupFilter || g.id === groupFilter)
+      .map((g) => {
+        const ps = data.people.filter((p) => (groupOf(p)?.id || "") === g.id);
+        if (!ps.length) return "";
+        return `<section class="group"><h2 class="ghead"><span class="dot" style="--c:${COLORS[g.color] || "var(--muted)"}"></span>${esc(g.label)} <span class="meta">${ps.length}</span></h2>
+          <div class="grid">${ps.map(card).join("")}</div></section>`;
+      }).join("");
+    const filters = data.people.length
+      ? `<div class="filters">${[{ id: "", label: "Everyone" }, ...groups()].map((g) => `<button class="filter" data-group="${esc(g.id)}" aria-pressed="${g.id === groupFilter}">${g.color ? `<span class="dot" style="--c:${COLORS[g.color]}"></span>` : ""}${esc(g.label)}</button>`).join("")}</div>`
+      : "";
+    const add = `<form class="panel" id="addPerson"><h3>Add someone</h3><div class="row" style="margin-top:8px"><input id="newPerson" placeholder="Name" aria-label="Name"><select id="newPersonGroup" aria-label="Group">${groupOptions(groupFilter)}</select><button class="btn">Add</button></div></form>`;
     const intro = !data.people.length && !data.items.length
       ? `<div class="panel"><h2>Start your list</h2><p>Tap the mic and say something like "Mom would love the linen apron from Anthropologie." She'll be added, and the link is found for you.</p></div>`
       : "";
-    v.innerHTML = banner + intro + `<div class="grid">${cards}${add}</div>`;
+    v.innerHTML = banner + intro + filters + (sections || (groupFilter ? `<p class="empty">No one in this group yet.</p>` : "")) + `<div class="grid" style="margin-top:14px">${add}</div>`;
   } else if (view === "ages") {
     const cards = ages().map((a) => {
       const its = data.items.filter((i) => i.age === a.id);
@@ -291,7 +315,13 @@ function render() {
       </form>
       <div class="panel settings">
         <h2>People</h2>
-        ${data.people.map((p) => `<div class="row"><span style="flex:1">${esc(p.name)}</span><button class="btn danger" data-unperson="${p.id}">Remove</button></div>`).join("") || "<p>No one yet. Add people on the People tab, or just name them when you add an idea.</p>"}
+        ${data.people.map((p) => `<div class="row"><span style="flex:1"><span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}</span><select data-persongroup="${p.id}" aria-label="Group for ${esc(p.name)}">${groupOptions(p.group)}</select><button class="btn danger" data-unperson="${p.id}">Remove</button></div>`).join("") || "<p>No one yet. Add people on the People tab, or just name them when you add an idea.</p>"}
+      </div>
+      <div class="panel settings">
+        <h2>Groups</h2>
+        <p>Tap a color dot to change it.</p>
+        ${groups().map((g) => `<div class="row"><button class="swatch" data-gcolor="${esc(g.id)}" style="--c:${COLORS[g.color] || COLORS.gray}" aria-label="Change color for ${esc(g.label)}"></button><span style="flex:1">${esc(g.label)}</span><button class="btn danger" data-ungroup="${esc(g.id)}">Remove</button></div>`).join("")}
+        <form class="row" id="addGroup"><input id="newGroup" placeholder="New group, like Neighbors" aria-label="New group"><button class="btn">Add</button></form>
       </div>
       <div class="panel settings">
         <h2>Age lists</h2>
@@ -313,10 +343,25 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage]");
+  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
+  else if (d.group !== undefined) { groupFilter = d.group; saved.set("gl_group", groupFilter); render(); }
+  else if (d.gcolor) {
+    const keys = Object.keys(COLORS);
+    commit("Change group color", (x) => {
+      x.groups ||= structuredClone(DEFAULT_GROUPS);
+      const g = x.groups.find((y) => y.id === d.gcolor);
+      if (g) g.color = keys[(keys.indexOf(g.color) + 1) % keys.length];
+    });
+  } else if (d.ungroup) {
+    commit("Remove group", (x) => {
+      x.groups = (x.groups || DEFAULT_GROUPS).filter((g) => g.id !== d.ungroup);
+      x.people.forEach((p) => { if (p.group === d.ungroup) p.group = null; });
+    });
+    if (groupFilter === d.ungroup) { groupFilter = ""; saved.set("gl_group", ""); }
+  }
   else if (d.cycle) {
     commit("Change status", (x) => {
       const it = byId(x, d.cycle);
@@ -416,8 +461,22 @@ document.addEventListener("submit", async (e) => {
     const name = $("newPerson").value.trim();
     if (!name) return;
     if (data.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the list`); return; }
+    const group = $("newPersonGroup").value || null;
     commit(`Add ${name}`, (x) => {
-      if (!x.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) x.people.push({ id: slug(name), name });
+      if (!x.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) x.people.push({ id: slug(name), name, group });
+    });
+  } else if (e.target.id === "addGroup") {
+    e.preventDefault();
+    const label = $("newGroup").value.trim();
+    const id = slug(label);
+    if (!label) return;
+    if (groups().some((g) => g.id === id)) { toast(`${label} is already a group`); return; }
+    // Next color not yet used by another group
+    const used = groups().map((g) => g.color);
+    const color = Object.keys(COLORS).find((k) => !used.includes(k)) || "gray";
+    commit(`Add group ${label}`, (x) => {
+      x.groups ||= structuredClone(DEFAULT_GROUPS);
+      if (!x.groups.some((g) => g.id === id)) x.groups.push({ id, label, color });
     });
   } else if (e.target.id === "connect") {
     e.preventDefault();
@@ -555,6 +614,13 @@ $("editForm").addEventListener("submit", (e) => {
     if (url && url !== had) it.link = { ...(it.link || {}), state: "ok", url, store: host(url) };
     else if (!url && had) it.link = { state: "none", hits: [], i: 0, rejected: it.link.rejected || [] };
   });
+});
+
+document.addEventListener("change", (e) => {
+  const id = e.target.dataset?.persongroup;
+  if (!id) return;
+  const group = e.target.value || null;
+  commit("Change group", (x) => { const p = x.people.find((y) => y.id === id); if (p) p.group = group; });
 });
 
 document.addEventListener("keydown", (e) => {
