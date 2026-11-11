@@ -78,6 +78,22 @@
   </form>
 </div>
 
+<div class="scrim side" id="personScrim" hidden>
+  <form class="sheet side" id="personForm" role="dialog" aria-labelledby="personTitle">
+    <h2 id="personTitle">Edit person</h2>
+    <label class="field">Name<input id="personName" required></label>
+    <label class="field">Group<select id="personGroup"></select></label>
+    <label class="field">Private notes<textarea id="personNotes" placeholder="Sizes, favorite colors, things they already have…"></textarea></label>
+    <p class="meta" style="margin:-6px 0 0">Notes only show here, never on their card.</p>
+    <div class="actions">
+      <button type="button" class="btn danger" id="personDelete">Remove</button>
+      <span class="grow"></span>
+      <button type="button" class="btn ghost" id="personCancel">Cancel</button>
+      <button type="submit" class="btn">Save</button>
+    </div>
+  </form>
+</div>
+
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="app.js"></script>
 </body>

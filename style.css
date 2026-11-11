@@ -106,7 +106,7 @@ input,select,textarea{font:inherit;font-size:.9rem;padding:7px 9px;border-radius
 @keyframes spin{to{transform:rotate(360deg)}}
 
 .field{display:grid;gap:4px;font-size:.78rem;color:var(--muted);font-weight:600}
-.field input,.field select{width:100%;color:var(--ink);font-weight:400}
+.field input,.field select,.field textarea{width:100%;color:var(--ink);font-weight:400}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .settings{display:grid;gap:10px;max-width:520px}
 code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
@@ -128,6 +128,12 @@ code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4
 .actions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
 .actions .btn{padding:9px 16px;font-size:.92rem}
 .grow{flex:1}
+.scrim.side{justify-items:end;align-items:stretch}
+.sheet.side{width:min(400px,92vw);height:100%;max-height:none;border-radius:18px 0 0 18px;align-content:start;animation:slidein .22s ease-out;
+  padding-top:calc(20px + env(safe-area-inset-top,0px))}
+.sheet.side textarea{min-height:180px}
+@keyframes slidein{from{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){.sheet.side{animation:none}}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:.88rem;z-index:9;max-width:calc(100% - 32px)}
 @media (prefers-reduced-motion:reduce){.rec button.live,.spinner{animation:none}}
 @media (max-width:420px){.stats{gap:12px}.stat b{font-size:1.15rem}}

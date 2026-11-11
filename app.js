@@ -295,7 +295,7 @@ function render() {
       const its = data.items.filter((i) => i.person === p.id);
       const spent = its.filter((i) => i.status !== "idea").reduce((a, i) => a + (Number(i.price) || 0), 0);
       return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${spent ? money(spent) + " spent" : its.some((i) => i.status !== "idea") ? "Bought" : "Nothing bought yet"}</span>
-        <button class="xbtn" data-unperson="${p.id}" aria-label="Remove ${esc(p.name)}" title="Remove">×</button></div>
+        <button class="xbtn" data-editperson="${p.id}" aria-label="Edit ${esc(p.name)}" title="Edit name, group and notes"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button></div>
         <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
         <button class="btn ghost addidea" data-addfor="${p.id}">+ Add idea</button></article>`;
     };
@@ -392,7 +392,7 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-resync]");
+  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-resync],[data-editperson]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -483,6 +483,7 @@ document.addEventListener("click", (e) => {
     commit("Delete idea", (x) => { x.items = x.items.filter((i) => i.id !== d.drop); });
   } else if (d.edit) openEdit(d.edit);
   else if (d.addfor) openCapture(true, d.addfor);
+  else if (d.editperson) openPerson(d.editperson);
   else if (d.unperson) {
     const n = data.items.filter((i) => i.person === d.unperson).length;
     if (!confirm(`Remove ${personName(d.unperson)}?${n ? ` Their ${n} idea${n > 1 ? "s" : ""} will move to the inbox.` : ""}`)) return;
@@ -681,6 +682,42 @@ $("editForm").addEventListener("submit", (e) => {
   });
 });
 
+// ---------- person panel ----------
+let editingPerson = null;
+function openPerson(id) {
+  const p = data.people.find((x) => x.id === id);
+  if (!p) return;
+  editingPerson = id;
+  $("personTitle").textContent = p.name;
+  $("personName").value = p.name;
+  $("personGroup").innerHTML = groupOptions(groupOf(p)?.id);
+  $("personNotes").value = p.notes || "";
+  $("personScrim").hidden = false;
+}
+const closePerson = () => { $("personScrim").hidden = true; editingPerson = null; };
+$("personCancel").onclick = closePerson;
+$("personScrim").addEventListener("click", (e) => { if (e.target.id === "personScrim") closePerson(); });
+$("personDelete").onclick = () => {
+  const id = editingPerson;
+  const n = data.items.filter((i) => i.person === id).length;
+  if (!confirm(`Remove ${personName(id)}?${n ? ` Their ${n} idea${n > 1 ? "s" : ""} will move to the inbox.` : ""}`)) return;
+  closePerson();
+  commit("Remove person", (x) => {
+    x.people = x.people.filter((p) => p.id !== id);
+    x.items.forEach((i) => { if (i.person === id) i.person = null; });
+  });
+  toast("Removed. Their ideas moved to the inbox.");
+};
+$("personForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = editingPerson;
+  const name = $("personName").value.trim();
+  if (data.people.some((p) => p.id !== id && p.name.toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the list`); return; }
+  const fields = { name, group: $("personGroup").value || null, notes: $("personNotes").value.trim() };
+  closePerson();
+  commit(`Edit ${name}`, (x) => { const p = x.people.find((y) => y.id === id); if (p) Object.assign(p, fields); });
+});
+
 document.addEventListener("change", async (e) => {
   if (e.target.id === "importFile") {
     const file = e.target.files[0];
@@ -705,6 +742,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!$("captureScrim").hidden) closeCapture();
   if (!$("editScrim").hidden) closeEdit();
+  if (!$("personScrim").hidden) closePerson();
 });
 
 let toastTimer;
