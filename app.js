@@ -146,7 +146,7 @@ async function load() {
   } catch (e) {
     setSync(e.status === 401 ? "Token rejected. Check Settings." : e.status === 404 ? "Repo not found. Check Settings." : "Offline. Showing last sync.", "err");
   }
-  render();
+  renderSoon();
   // Keep checking while ideas are being filed or links are being searched
   if (data.items.some((i) => isFiling(i) || isSearching(i))) pollTimer = setTimeout(load, 6000);
 }
@@ -174,14 +174,14 @@ function commit(message, mutate) {
         saved.set("gl_cache", JSON.stringify(data));
         setDirty(false);
         setSync("Synced", "ok");
-        render();
+        renderSoon();
         return;
       } catch (e) {
         if (e.status !== 409 && e.status !== 422) {
           const why = e.status === 401 ? "the token was rejected" : e.status === 403 || e.status === 404 ? "the token can't write to the data repo (check its Contents permission)" : "GitHub couldn't be reached";
           setSync("Not backed up", "err");
           toast(`Saved on this device only: ${why}. It'll back up on the next sync.`);
-          render();
+          renderSoon();
           return;
         }
       }
@@ -215,15 +215,16 @@ function runAction(id, mode, saving) {
 }
 
 // Adds an idea right away; the Action fills in the details in the background
-function addIdea(text, { person = null, age = null, source = "typed", url = null, title = null } = {}) {
+// smart: send it to the Action to tidy up and find links (spoken ideas and shared pages). Typed ideas are kept as typed.
+function addIdea(text, { person = null, age = null, source = "typed", url = null, title = null, smart = false } = {}) {
   const id = newId();
   const item = {
     id, person, age, what: (title || text).replace(/\s+/g, " ").slice(0, 100), note: "", status: "idea", price: null,
-    source, raw: text, created: new Date().toISOString(), filing: Boolean(cfg.token),
+    source, raw: text, created: new Date().toISOString(), filing: smart && Boolean(cfg.token),
     link: url ? { state: "ok", url, store: host(url), hits: [], i: 0, rejected: [] } : noLink(),
   };
   const saving = commit("Add idea", (x) => { if (!byId(x, id)) x.items.push(structuredClone(item)); });
-  if (cfg.token) runAction(id, "file", saving);
+  if (smart && cfg.token) runAction(id, "file", saving);
   return id;
 }
 
@@ -311,9 +312,31 @@ function giveBox(i) {
     <div class="row"><select id="give-${i.id}" aria-label="Who is it for">${opts}</select><button class="btn" data-givesave="${i.id}">Add</button></div></div>`;
 }
 
+// Redraws from syncing wait while you're typing in a box on the page, then catch up once you leave it
+const typingInView = () => { const a = document.activeElement; return Boolean(a && $("view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)); };
+let renderWaiting = false;
+function renderSoon() {
+  if (typingInView()) { renderWaiting = true; return; }
+  render();
+}
+// The delay lets a tap on a button (like Add) finish before the page is rebuilt
+document.addEventListener("focusout", () => setTimeout(() => { if (renderWaiting && !typingInView()) render(); }, 400));
+
 function render() {
   // Don't rebuild the page under a finger mid-drag; it redraws when the drag ends
   if (drag) { drag.rerender = true; return; }
+  renderWaiting = false;
+  // If the page has to be rebuilt anyway, put back the box being typed in, its text and cursor
+  const a = document.activeElement;
+  const keep = a && a.id && $("view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)
+    ? { id: a.id, value: a.value, start: a.selectionStart, end: a.selectionEnd } : null;
+  try { draw(); } finally {
+    const el = keep && $(keep.id);
+    if (el) { el.value = keep.value; el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch {} }
+  }
+}
+
+function draw() {
   stats();
   saved.set("gl_view", view);
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
@@ -352,7 +375,7 @@ function render() {
       const its = data.items.filter((i) => i.age === a.id);
       return `<article class="panel"><div class="phead"><h3>${esc(a.label)}</h3><span class="budget num">${its.length} idea${its.length === 1 ? "" : "s"}</span></div>
         <ul class="items">${ranked(its).map((i) => itemRow(i, false, its.length > 1)).join("") || "<li class='empty'>No go-to gifts yet</li>"}</ul>
-        <form class="row addAgeIdea" data-age="${esc(a.id)}" style="margin-top:8px"><input placeholder="Add a gift" aria-label="Add a gift for ${esc(a.label)}"><button class="btn ghost">Add</button></form></article>`;
+        <form class="row addAgeIdea" data-age="${esc(a.id)}" style="margin-top:8px"><input id="ageadd-${esc(a.id)}" placeholder="Add a gift" aria-label="Add a gift for ${esc(a.label)}"><button class="btn ghost">Add</button></form></article>`;
     }).join("");
     const add = `<form class="panel" id="addAge"><h3>Add an age</h3><div class="row" style="margin-top:8px"><input id="newAge" placeholder="7, or a label like Teen" aria-label="Age"><button class="btn">Add</button></div></form>`;
     const intro = `<p class="meta" style="margin:0 0 12px">Your go-to gifts for each age, kept year to year. Tap <b>Give</b> to add one to someone's list.</p>`;
@@ -536,12 +559,14 @@ document.addEventListener("submit", async (e) => {
     const what = input.value.trim();
     const age = e.target.dataset.age;
     if (!what) return;
+    input.value = "";
     if (!data.ages) commit("Save age lists", (x) => { x.ages ||= structuredClone(DEFAULT_AGES); });
     addIdea(what, { age });
   } else if (e.target.id === "addAge") {
     e.preventDefault();
     const text = $("newAge").value.trim();
     if (!text) return;
+    $("newAge").value = "";
     const id = /^\d+$/.test(text) ? text : slug(text);
     const label = /^\d+$/.test(text) ? `Age ${text}` : text;
     if (ageLabel(id)) { toast(`${label} is already there`); return; }
@@ -555,6 +580,7 @@ document.addEventListener("submit", async (e) => {
     if (!name) return;
     if (data.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the list`); return; }
     const group = $("newPersonGroup").value || null;
+    $("newPerson").value = "";
     commit(`Add ${name}`, (x) => {
       if (!x.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) x.people.push({ id: slug(name), name, group });
     });
@@ -563,6 +589,7 @@ document.addEventListener("submit", async (e) => {
     const label = $("newGroup").value.trim();
     const id = slug(label);
     if (!label) return;
+    $("newGroup").value = "";
     if (groups().some((g) => g.id === id)) { toast(`${label} is already a group`); return; }
     // Next color not yet used by another group
     const used = groups().map((g) => g.color);
@@ -596,14 +623,16 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
 let autoSaveTimer = null;
 let captureFor = null; // person id when opened from a person's card
+let spoke = false; // true once the mic has heard something this time
 
 function openCapture(listenNow, personId = null) {
   captureFor = personId;
+  spoke = false;
   const name = personName(personId);
   $("captureTitle").textContent = name ? `Gift idea for ${name}` : "New gift idea";
   $("captureScrim").hidden = false;
   $("memoText").value = "";
-  $("micHint").textContent = name ? "Type the gift, or tap the mic to say it. Name a store to get a link." : "Type or tap the mic. Say who it's for and what it is.";
+  $("micHint").textContent = name ? "Type the gift, or tap the mic to say it. Say a store and a link is found for you." : "Typed ideas go to your inbox. Tap the mic to say who it's for and it's filed for you.";
   $("memoText").placeholder = name ? "Linen apron from Anthropologie" : "Leo wants the Lego orchid set from Target";
   if (listenNow) listen(true);
   else setTimeout(() => $("memoText").focus(), 50);
@@ -628,6 +657,7 @@ function listen(autoSave) {
   const before = $("memoText").value.trim();
   rec.onresult = (ev) => {
     const said = [...ev.results].map((r) => r[0].transcript).join("");
+    spoke = true;
     $("memoText").value = (before ? before + " " : "") + said;
   };
   rec.onerror = (ev) => {
@@ -659,8 +689,8 @@ $("captureForm").addEventListener("submit", (e) => {
   if (!text) { $("memoText").focus(); return; }
   const person = captureFor;
   closeCapture();
-  addIdea(text, { person, source: "voice" });
-  toast(person ? `Added for ${personName(person)}` : "Added. Working out who it's for…");
+  addIdea(text, { person, source: spoke ? "voice" : "typed", smart: spoke });
+  toast(person ? `Added for ${personName(person)}` : spoke ? "Added. Working out who it's for…" : "Added to your inbox");
 });
 
 // ---------- edit sheet ----------
@@ -887,7 +917,7 @@ if (isShare) {
   if (sharedUrl && !(sharedText || "").includes(sharedUrl)) parts.push(sharedUrl);
   const raw = parts.filter(Boolean).join("\n");
   const url = sharedUrl || raw.match(/https?:\/\/\S+/)?.[0] || null;
-  addIdea(raw, { source: "shared", url, title: sharedTitle || (sharedText || "").replace(url || "", "").trim() || host(url || "") });
+  addIdea(raw, { source: "shared", smart: true, url, title: sharedTitle || (sharedText || "").replace(url || "", "").trim() || host(url || "") });
   toast("Added to your inbox");
 } else if (voiceShortcut) {
   openCapture(true);
