@@ -56,6 +56,8 @@ const recent = (i) => Date.now() - new Date(i.created || 0) < 15 * 60e3;
 const isFiling = (i) => i.filing && recent(i);
 const isSearching = (i) => i.link?.state === "searching" && (!i.link.since || Date.now() - i.link.since < 15 * 60e3);
 const noLink = () => ({ state: "none", hits: [], i: 0, rejected: [] });
+// Ideas you've ranked come first in your order; unranked ones follow, oldest first
+const ranked = (items) => [...items].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || String(a.created || "").localeCompare(String(b.created || "")));
 
 // "Who or what is it for" picker values: p:<person id> or a:<age id>
 function forOptions(withInbox) {
@@ -94,9 +96,16 @@ async function gh(path, opts = {}) {
 
 function setSync(text, state) {
   const el = $("sync");
-  el.textContent = text;
+  el.title = text;
+  el.setAttribute("aria-label", text);
   el.className = "sync " + (state || "");
 }
+// Tapping the dot explains it, and retries or opens Settings when something's wrong
+$("sync").onclick = () => {
+  if (!cfg.token) { toast("Your list is only on this device. Connect GitHub to back it up."); view = "settings"; render(); return; }
+  if (isDirty()) { toast("Some changes aren't backed up yet. Trying again…"); load(); return; }
+  toast($("sync").title === "Synced" ? "Everything is backed up" : $("sync").title);
+};
 
 // "1" while this device has changes GitHub doesn't have yet. Unset means a copy from before this
 // flag existed, so anything in it is treated as not backed up.
@@ -267,7 +276,7 @@ function linkBox(i) {
   return `<div class="found">${body}<div class="row">${buttons}<button class="btn ghost" data-paste="${i.id}">Paste my own</button></div>${paste}</div>`;
 }
 
-function itemRow(i, showWho) {
+function itemRow(i, showWho, sortable) {
   const bits = [];
   if (showWho) {
     const p = data.people.find((x) => x.id === i.person);
@@ -283,8 +292,11 @@ function itemRow(i, showWho) {
   const check = age
     ? "<span></span>"
     : `<button class="check" data-buy="${i.id}" aria-pressed="${done}" aria-label="${done ? "Bought. Tap to undo" : "Mark as bought"}" title="${done ? "Bought" : "Mark as bought"}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></button>`;
-  return `<li class="item${done && !age ? " done" : ""}">
-    ${check}
+  const grip = sortable
+    ? `<button class="grip" data-grip="${i.id}" aria-label="Move ${esc(i.what)}. Drag, or use the up and down arrow keys." title="Drag to reorder"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>`
+    : "";
+  return `<li class="item${sortable ? " sortable" : ""}${done && !age ? " done" : ""}" data-id="${i.id}">
+    ${grip}${check}
     <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
     <div class="acts">${age ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>` : ""}<button class="xbtn" data-edit="${i.id}" aria-label="Edit ${esc(i.what)}" title="Edit, add a link, or delete">${PENCIL}</button></div>
@@ -300,6 +312,8 @@ function giveBox(i) {
 }
 
 function render() {
+  // Don't rebuild the page under a finger mid-drag; it redraws when the drag ends
+  if (drag) { drag.rerender = true; return; }
   stats();
   saved.set("gl_view", view);
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
@@ -313,7 +327,7 @@ function render() {
       const summary = !its.length ? "" : `${bought.length} of ${its.length} bought${spent ? " · " + money(spent) : ""}`;
       return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${summary}</span>
         <button class="xbtn" data-editperson="${p.id}" aria-label="Edit ${esc(p.name)}" title="Edit name, group and notes">${PENCIL}</button></div>
-        <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
+        <ul class="items">${ranked(its).map((i) => itemRow(i, false, its.length > 1)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
         <button class="btn ghost addidea" data-addfor="${p.id}">+ Add idea</button></article>`;
     };
     // One section per group, then anyone without a group
@@ -337,7 +351,7 @@ function render() {
     const cards = ages().map((a) => {
       const its = data.items.filter((i) => i.age === a.id);
       return `<article class="panel"><div class="phead"><h3>${esc(a.label)}</h3><span class="budget num">${its.length} idea${its.length === 1 ? "" : "s"}</span></div>
-        <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No go-to gifts yet</li>"}</ul>
+        <ul class="items">${ranked(its).map((i) => itemRow(i, false, its.length > 1)).join("") || "<li class='empty'>No go-to gifts yet</li>"}</ul>
         <form class="row addAgeIdea" data-age="${esc(a.id)}" style="margin-top:8px"><input placeholder="Add a gift" aria-label="Add a gift for ${esc(a.label)}"><button class="btn ghost">Add</button></form></article>`;
     }).join("");
     const add = `<form class="panel" id="addAge"><h3>Add an age</h3><div class="row" style="margin-top:8px"><input id="newAge" placeholder="7, or a label like Teen" aria-label="Age"><button class="btn">Add</button></div></form>`;
@@ -406,20 +420,15 @@ function render() {
         <p class="meta">Restoring adds what's in the file to your list. It doesn't delete anything.</p>
       </div>`;
   }
-  // Loud reminder whenever this device has changes GitHub doesn't
-  if (view !== "settings" && (!cfg.token || isDirty())) {
-    v.insertAdjacentHTML("afterbegin", `<div class="warn">${cfg.token ? "Some changes are only on this device so far. They'll back up on the next sync." : "Your list is only saved on this device."}
-      ${cfg.token ? `<button class="btn ghost" data-resync="1">Sync now</button>` : `<button class="btn" data-view="settings">Connect GitHub to back it up</button>`}</div>`);
-  }
+  if (!cfg.token) setSync("Not backed up", "err");
 }
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-resync],[data-editperson]");
+  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
-  else if (d.resync) load();
   else if (d.export) {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
@@ -494,7 +503,7 @@ document.addEventListener("click", (e) => {
     // Copies the idea onto the person's list; the age list keeps its own copy for next time
     commit("Give age idea", (x) => {
       const src = byId(x, d.givesave);
-      if (src) x.items.push({ ...structuredClone(src), id: newId(), person, age: null, status: "idea", created: new Date().toISOString() });
+      if (src) x.items.push({ ...structuredClone(src), id: newId(), person, age: null, status: "idea", rank: undefined, created: new Date().toISOString() });
     });
     toast("Added to " + personName(person) + "'s list");
   } else if (d.unage) {
@@ -685,7 +694,7 @@ $("editCopy").onclick = () => {
   const src = byId(data, editing);
   const to = $("editCopyTo").value;
   if (!src || !to) return;
-  const copy = { ...structuredClone(src), id: newId(), what: $("editWhat").value.trim() || src.what, note: $("editNote").value.trim(), status: "idea", filing: false, created: new Date().toISOString() };
+  const copy = { ...structuredClone(src), id: newId(), what: $("editWhat").value.trim() || src.what, note: $("editNote").value.trim(), status: "idea", filing: false, rank: undefined, created: new Date().toISOString() };
   if (copy.link?.state === "searching") copy.link = noLink();
   assignTo(copy, to);
   commit("Copy idea", (x) => { if (!byId(x, copy.id)) x.items.push(structuredClone(copy)); });
@@ -736,6 +745,56 @@ $("editForm").addEventListener("submit", (e) => {
     if (url && url !== had) it.link = { ...(it.link || {}), state: "ok", url, store: host(url) };
     else if (!url && had) it.link = { ...noLink(), rejected: it.link.rejected || [] };
   });
+});
+
+// ---------- reordering ----------
+// Saves the order of a list's rows as each idea's rank
+function saveOrder(list) {
+  const ids = [...list.querySelectorAll(":scope > .item[data-id]")].map((li) => li.dataset.id);
+  commit("Reorder ideas", (x) => ids.forEach((id, rank) => { const it = byId(x, id); if (it) it.rank = rank; }));
+}
+
+// Drag by the grip with a finger or mouse; the row moves live as you pass other rows
+let drag = null;
+document.addEventListener("pointerdown", (e) => {
+  const grip = e.target.closest(".grip");
+  if (!grip || e.button > 0) return;
+  e.preventDefault();
+  const li = grip.closest(".item");
+  drag = { li, list: li.parentElement, before: li.nextElementSibling, pointer: e.pointerId };
+  grip.setPointerCapture?.(e.pointerId);
+  li.classList.add("dragging");
+});
+document.addEventListener("pointermove", (e) => {
+  if (!drag || e.pointerId !== drag.pointer) return;
+  e.preventDefault();
+  const rows = [...drag.list.querySelectorAll(":scope > .item[data-id]")].filter((r) => r !== drag.li);
+  const next = rows.find((r) => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
+  if (next !== drag.li.nextElementSibling) drag.list.insertBefore(drag.li, next || null);
+});
+function endDrag(e) {
+  if (!drag || (e && e.pointerId !== drag.pointer)) return;
+  const { li, list, before, rerender } = drag;
+  li.classList.remove("dragging");
+  drag = null;
+  if (li.nextElementSibling !== before) saveOrder(list);
+  else if (rerender) render();
+}
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+// Keyboard: arrow keys on a focused grip move the row one place
+document.addEventListener("keydown", (e) => {
+  const grip = e.target.closest?.(".grip");
+  if (!grip || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+  e.preventDefault();
+  const li = grip.closest(".item");
+  const sib = e.key === "ArrowUp" ? li.previousElementSibling : li.nextElementSibling?.nextElementSibling ?? null;
+  if (e.key === "ArrowUp" && !sib) return;
+  if (e.key === "ArrowDown" && !li.nextElementSibling) return;
+  const id = li.dataset.id;
+  li.parentElement.insertBefore(li, sib);
+  saveOrder(li.parentElement);
+  $("view").querySelector(`.grip[data-grip="${id}"]`)?.focus();
 });
 
 // ---------- person panel ----------

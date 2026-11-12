@@ -27,11 +27,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .top h1{font-size:2.1rem;font-weight:800;letter-spacing:-.02em;line-height:1}
 .top h1 span{color:var(--berry)}
 .sub{color:var(--muted);font-size:.85rem;margin-top:6px}
-.sync{display:inline-flex;align-items:center;gap:6px}
-.sync::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
+/* Sync status dot beside the title: green backed up, gold saving, red only on this device */
+.sync{width:24px;height:24px;border:0;background:none;padding:0;vertical-align:middle;display:inline-grid;place-items:center;margin-left:2px}
+.sync::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--muted)}
 .sync.ok::before{background:var(--pine)}
-.sync.busy::before{background:var(--gold)}
-.sync.err::before{background:var(--berry)}
+.sync.busy::before{background:var(--gold);animation:blink 1s ease-in-out infinite}
+.sync.err::before{background:var(--berry);box-shadow:0 0 0 3px var(--berry-soft)}
+@keyframes blink{50%{opacity:.35}}
 .stats{display:flex;gap:18px}
 .stat b{display:block;font-family:var(--display);font-size:1.35rem;line-height:1.1}
 .stat small{color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}
@@ -51,6 +53,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .budget{font-size:.8rem;color:var(--muted)}
 .items{list-style:none;margin:0;padding:0;display:grid}
 .item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:4px 10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}
+.item.sortable{grid-template-columns:auto auto minmax(0,1fr) auto auto;gap:4px 8px}
+.grip{border:0;background:none;color:var(--muted);padding:6px 2px;margin-left:-4px;cursor:grab;touch-action:none;display:grid;place-items:center;border-radius:6px}
+.grip:hover{color:var(--ink)}
+.item.dragging{background:var(--surface);box-shadow:0 6px 18px rgba(0,0,0,.18);border-radius:10px;position:relative;z-index:2}
+.item.dragging .grip{cursor:grabbing;color:var(--berry)}
 .check{width:24px;height:24px;border-radius:50%;border:2px solid var(--muted);background:none;color:transparent;display:grid;place-items:center;padding:0;flex:none}
 .check[aria-pressed="true"]{background:var(--pine);border-color:var(--pine);color:var(--surface)}
 .item.done .name{color:var(--muted)}
@@ -83,7 +90,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .xbtn{border:0;background:none;color:var(--muted);font-size:1.3rem;line-height:1;padding:2px 6px;margin:-4px -8px 0 0;border-radius:6px}
 .xbtn:hover{color:var(--berry);background:var(--berry-soft)}
 .addperson{margin:0 0 14px}
-.warn{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;background:var(--berry-soft);color:var(--ink);border:1px solid var(--berry);border-radius:12px;padding:10px 14px;margin:0 0 14px;font-size:.9rem;font-weight:500}
 label.btn{cursor:pointer;display:inline-block}
 .addperson input{flex:1;min-width:0}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c);margin-right:6px;vertical-align:baseline}
