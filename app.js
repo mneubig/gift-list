@@ -669,6 +669,8 @@ function openEdit(id) {
   $("editLink").value = it.link?.state === "ok" ? it.link.url || "" : "";
   $("editStore").value = it.link?.store && it.link.state !== "ok" ? it.link.store : "";
   $("editNote").value = it.note || "";
+  $("editCopyTo").innerHTML = forOptions(false);
+  $(`editCopyTo`).querySelector(`option[value="${forValue(it)}"]`)?.remove();
   syncOpenLink();
   $("editScrim").hidden = false;
 }
@@ -678,6 +680,18 @@ function syncOpenLink() {
   $("editOpen").href = url;
 }
 $("editLink").addEventListener("input", syncOpenLink);
+// Copies the gift, as currently shown in the panel, onto another person's list (or an age list) as a new idea
+$("editCopy").onclick = () => {
+  const src = byId(data, editing);
+  const to = $("editCopyTo").value;
+  if (!src || !to) return;
+  const copy = { ...structuredClone(src), id: newId(), what: $("editWhat").value.trim() || src.what, note: $("editNote").value.trim(), status: "idea", filing: false, created: new Date().toISOString() };
+  if (copy.link?.state === "searching") copy.link = noLink();
+  assignTo(copy, to);
+  commit("Copy idea", (x) => { if (!byId(x, copy.id)) x.items.push(structuredClone(copy)); });
+  toast(`Copied to ${personName(to.slice(2)) || ageLabel(to.slice(2))}`);
+};
+
 // Saves what's in the panel, then starts a link search for it
 $("editFind").onclick = () => {
   const id = editing;
