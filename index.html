@@ -58,17 +58,22 @@
   </form>
 </div>
 
-<div class="scrim" id="editScrim" hidden>
-  <form class="sheet" id="editForm" role="dialog" aria-labelledby="editTitle">
+<div class="scrim side" id="editScrim" hidden>
+  <form class="sheet side" id="editForm" role="dialog" aria-labelledby="editTitle">
     <h2 id="editTitle">Edit gift</h2>
     <label class="field">Gift<input id="editWhat" required></label>
     <label class="field">For<select id="editPerson"></select></label>
     <div class="two">
+      <label class="field" id="editStatusField">Status<select id="editStatus"><option value="idea">Still an idea</option><option value="bought">Bought</option><option value="wrapped">Wrapped</option></select></label>
       <label class="field">Price<input id="editPrice" inputmode="decimal" placeholder="Optional"></label>
-      <label class="field" id="editStatusField">Status<select id="editStatus"><option value="idea">Idea</option><option value="bought">Bought</option><option value="wrapped">Wrapped</option></select></label>
     </div>
-    <label class="field">Link<input id="editLink" type="url" placeholder="https://"></label>
-    <label class="field">Note<input id="editNote"></label>
+    <fieldset class="linkset">
+      <legend>Link</legend>
+      <div class="row"><input id="editLink" type="text" inputmode="url" autocomplete="off" placeholder="Paste a link (https://…)" aria-label="Link"><a class="btn ghost" id="editOpen" target="_blank" rel="noopener" hidden>Open</a></div>
+      <div class="row"><input id="editStore" placeholder="Where to look, like Target (optional)" aria-label="Store to search"><button type="button" class="btn ghost" id="editFind">Find links</button></div>
+      <p class="meta" id="editLinkHint">Matches show on the gift's card for you to confirm.</p>
+    </fieldset>
+    <label class="field">Note<textarea id="editNote" placeholder="Size, color, where you saw it…"></textarea></label>
     <div class="actions">
       <button type="button" class="btn danger" id="editDelete">Delete</button>
       <span class="grow"></span>

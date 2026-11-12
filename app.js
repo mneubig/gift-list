@@ -18,8 +18,7 @@ const toB64 = (s) => {
   return btoa(bin);
 };
 const fromB64 = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
-const stripFor = (s) => s.replace(/^\[for:[^\]]*\]\s*/, "");
-const APP_URL =location.origin + location.pathname.replace(/index\.html$/, "");
+const APP_URL = location.origin + location.pathname.replace(/index\.html$/, "");
 
 // ---------- state ----------
 const cfg = {
@@ -28,7 +27,6 @@ const cfg = {
   repo: saved.get("gl_repo") || "gift-list-data",
 };
 let data = JSON.parse(saved.get("gl_cache") || "null") || { people: [], items: [] };
-let pending = []; // open GitHub issues = ideas still being filed
 let view = saved.get("gl_view") || "people";
 let pasteOpen = null;
 let giveOpen = null;
@@ -53,6 +51,11 @@ const groupOptions = (sel) => `<option value="">No group</option>` + groups().ma
 const personName = (id) => data.people.find((p) => p.id === id)?.name;
 const isInbox = (i) => !isAgeIdea(i) && (!i.person || !personName(i.person));
 const byId = (d, id) => d.items.find((i) => i.id === id);
+// Ideas waiting on the GitHub Action. Ones older than 15 minutes are treated as done so a failed run never spins forever.
+const recent = (i) => Date.now() - new Date(i.created || 0) < 15 * 60e3;
+const isFiling = (i) => i.filing && recent(i);
+const isSearching = (i) => i.link?.state === "searching" && (!i.link.since || Date.now() - i.link.since < 15 * 60e3);
+const noLink = () => ({ state: "none", hits: [], i: 0, rejected: [] });
 
 // "Who or what is it for" picker values: p:<person id> or a:<age id>
 function forOptions(withInbox) {
@@ -120,8 +123,7 @@ async function load() {
   if (!cfg.token) { setSync("Not backed up", "err"); render(); return; }
   setSync("Syncing…", "busy");
   try {
-    const [file, issues] = await Promise.all([gh("/contents/data.json"), gh("/issues?state=open&per_page=50")]);
-    pending = issues.filter((i) => !i.pull_request);
+    const file = await gh("/contents/data.json");
     if (isDirty()) {
       // Never replace unsaved local changes with GitHub's copy: merge them in and save
       const local = data;
@@ -137,7 +139,7 @@ async function load() {
   }
   render();
   // Keep checking while ideas are being filed or links are being searched
-  if (pending.length || data.items.some((i) => i.link?.state === "searching")) pollTimer = setTimeout(load, 8000);
+  if (data.items.some((i) => isFiling(i) || isSearching(i))) pollTimer = setTimeout(load, 6000);
 }
 
 // Applies a change locally right away, then to the latest data.json on GitHub (retrying if it changed underneath)
@@ -181,38 +183,51 @@ function commit(message, mutate) {
   return saveQueue;
 }
 
-async function sendIdea(kind, body) {
-  if (!cfg.token) {
-    toast("Connect to GitHub in Settings first");
-    view = "settings";
-    render();
-    return false;
-  }
-  try {
-    const title = `[${kind}] ${stripFor(body).replace(/\s+/g, " ").slice(0, 60)}`;
-    const issue = await gh("/issues", { method: "POST", body: JSON.stringify({ title, body }) });
-    pending.unshift(issue);
-    render();
-    clearTimeout(pollTimer);
-    pollTimer = setTimeout(load, 8000);
-    return true;
-  } catch (e) {
-    toast(`Couldn't send it (${e.message}). Your text is still here.`);
-    return false;
-  }
+// Starts the GitHub Action for one item: "file" tidies a new idea (who it's for, store, link), "search" finds product links.
+// Runs after the save reaches GitHub so the Action can see the item; if that fails, the spinner is cleared instead.
+function runAction(id, mode, saving) {
+  const undo = (x) => {
+    const it = byId(x, id);
+    if (!it) return;
+    if (mode === "file") it.filing = false;
+    else if (it.link?.state === "searching") it.link.state = it.link.hits?.length ? "pending" : "notfound";
+  };
+  saving.then(async () => {
+    if (!cfg.token || isDirty()) { commit("Stop waiting", undo); return; }
+    try {
+      await gh("/actions/workflows/process.yml/dispatches", { method: "POST", body: JSON.stringify({ ref: "main", inputs: { item_id: id, mode } }) });
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(load, 6000);
+    } catch (e) {
+      commit("Stop waiting", undo);
+      toast(e.status === 403 ? "The token can't start searches. Give it Actions: Read and write." : `Couldn't start it (${e.message})`);
+    }
+  });
 }
 
-function searchAgain(id) {
-  commit("Search again", (d) => {
-    const it = byId(d, id);
-    if (it?.link) it.link.state = "searching";
+// Adds an idea right away; the Action fills in the details in the background
+function addIdea(text, { person = null, age = null, source = "typed", url = null, title = null } = {}) {
+  const id = newId();
+  const item = {
+    id, person, age, what: (title || text).replace(/\s+/g, " ").slice(0, 100), note: "", status: "idea", price: null,
+    source, raw: text, created: new Date().toISOString(), filing: Boolean(cfg.token),
+    link: url ? { state: "ok", url, store: host(url), hits: [], i: 0, rejected: [] } : noLink(),
+  };
+  const saving = commit("Add idea", (x) => { if (!byId(x, id)) x.items.push(structuredClone(item)); });
+  if (cfg.token) runAction(id, "file", saving);
+  return id;
+}
+
+// Looks for product links, at one store when given, otherwise anywhere
+function findLinks(id, store) {
+  const saving = commit("Find links", (x) => {
+    const it = byId(x, id);
+    if (!it) return;
+    const L = it.link || noLink();
+    it.link = { ...L, state: "searching", since: Date.now(), store: store === undefined ? L.store : store || null };
   });
-  gh("/actions/workflows/process.yml/dispatches", {
-    method: "POST",
-    body: JSON.stringify({ ref: "main", inputs: { item_id: id } }),
-  })
-    .then(() => { clearTimeout(pollTimer); pollTimer = setTimeout(load, 15000); })
-    .catch((e) => toast(`Couldn't start the search (${e.message})`));
+  if (!cfg.token) { toast("Connect GitHub in Settings to search for links"); return; }
+  runAction(id, "search", saving);
 }
 
 // ---------- rendering ----------
@@ -225,7 +240,7 @@ function stats() {
   const covered = new Set(bought.map((i) => i.person));
   $("todo").textContent = `${data.people.filter((p) => !covered.has(p.id)).length} of ${data.people.length}`;
   $("links").textContent = data.items.filter((i) => ["pending", "notfound"].includes(i.link?.state)).length;
-  const inboxN = data.items.filter(isInbox).length + pending.length;
+  const inboxN = data.items.filter(isInbox).length;
   $("inboxCount").textContent = inboxN;
   $("inboxCount").hidden = !inboxN;
 }
@@ -233,9 +248,10 @@ function stats() {
 function linkBox(i) {
   const L = i.link;
   if (!L || L.state === "none" || L.state === "ok") return "";
-  const storeName = esc(L.store || "the store");
+  const where = L.store ? `at ${esc(L.store)}` : "online";
   if (L.state === "searching") {
-    return `<div class="found"><div class="row"><span class="spinner"></span><span class="searching">Looking for more at ${storeName}…</span></div></div>`;
+    if (!isSearching(i)) return "";
+    return `<div class="found"><div class="row"><span class="spinner"></span><span class="searching">Looking for links ${where}…</span></div></div>`;
   }
   const hit = L.state === "pending" ? L.hits?.[L.i] : null;
   const paste = pasteOpen === i.id
@@ -244,7 +260,7 @@ function linkBox(i) {
   const body = hit
     ? `<div class="lbl">Is this the right link?</div><div class="hit"><a href="${esc(hit.url)}" target="_blank" rel="noopener">${esc(hit.title)}</a>
        <span class="meta">${esc(host(hit.url))}${hit.price != null ? " · " + money(hit.price) : ""} · ${L.i + 1} of ${L.hits.length}</span></div>`
-    : `<div class="lbl">No link yet</div><div class="meta">Couldn't find it at ${storeName}.${L.error ? " " + esc(L.error) : ""}</div>`;
+    : `<div class="lbl">No link yet</div><div class="meta">Couldn't find it ${where}.${L.error ? " " + esc(L.error) : ""}</div>`;
   const buttons = hit
     ? `<button class="btn" data-use="${i.id}">Use this</button><button class="btn ghost" data-more="${i.id}">Keep searching</button>`
     : `<button class="btn ghost" data-more="${i.id}">Search again</button>`;
@@ -258,29 +274,29 @@ function itemRow(i, showWho) {
     bits.push(p ? `<span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}` : "Inbox");
   }
   if (i.link?.state === "ok" && i.link.url) bits.push(`<a href="${esc(i.link.url)}" target="_blank" rel="noopener">${esc(host(i.link.url))} ↗</a>`);
+  if (i.status === "wrapped") bits.push("<span class='tag'>wrapped</span>");
   if (i.note) bits.push(esc(i.note));
-  if (i.source === "voice") bits.push("<span class='tag'>voice</span>");
-  if (i.source === "shared") bits.push("<span class='tag'>shared</span>");
+  if (isFiling(i)) bits.push(`<span class="filing"><span class="spinner sm"></span>Filling in details…</span>`);
+  else if (!i.link || i.link.state === "none") bits.push(`<button class="linkbtn" data-find="${i.id}">Find a link</button>`);
   const age = isAgeIdea(i);
-  const chip = age
-    ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>`
-    : `<button class="chip ${i.status}" data-cycle="${i.id}" title="Tap to change status">${i.status}</button>`;
-  return `<li class="item">
+  const done = i.status !== "idea";
+  const check = age
+    ? "<span></span>"
+    : `<button class="check" data-buy="${i.id}" aria-pressed="${done}" aria-label="${done ? "Bought. Tap to undo" : "Mark as bought"}" title="${done ? "Bought" : "Mark as bought"}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></button>`;
+  return `<li class="item${done && !age ? " done" : ""}">
+    ${check}
     <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
-    ${chip}
+    <div class="acts">${age ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>` : ""}<button class="xbtn" data-edit="${i.id}" aria-label="Edit ${esc(i.what)}" title="Edit, add a link, or delete">${PENCIL}</button></div>
     ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}</li>`;
 }
+const PENCIL = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>`;
 
 function giveBox(i) {
   if (!data.people.length) return `<div class="found"><div class="meta">Add people on the People tab first.</div></div>`;
   const opts = data.people.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
   return `<div class="found"><div class="lbl">Add to this year's list</div>
     <div class="row"><select id="give-${i.id}" aria-label="Who is it for">${opts}</select><button class="btn" data-givesave="${i.id}">Add</button></div></div>`;
-}
-
-function pendingRows() {
-  return pending.map((p) => `<div class="pending"><span class="spinner"></span><span>Filing <q>${esc(stripFor(p.body || p.title).split("\n")[0].slice(0, 120))}</q></span></div>`).join("");
 }
 
 function render() {
@@ -290,12 +306,13 @@ function render() {
   const v = $("view");
 
   if (view === "people") {
-    const banner = pending.length ? `<div class="pending"><span class="spinner"></span><span>Filing ${pending.length} new idea${pending.length > 1 ? "s" : ""}…</span></div>` : "";
     const card = (p) => {
       const its = data.items.filter((i) => i.person === p.id);
-      const spent = its.filter((i) => i.status !== "idea").reduce((a, i) => a + (Number(i.price) || 0), 0);
-      return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${spent ? money(spent) + " spent" : its.some((i) => i.status !== "idea") ? "Bought" : "Nothing bought yet"}</span>
-        <button class="xbtn" data-editperson="${p.id}" aria-label="Edit ${esc(p.name)}" title="Edit name, group and notes"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button></div>
+      const bought = its.filter((i) => i.status !== "idea");
+      const spent = bought.reduce((a, i) => a + (Number(i.price) || 0), 0);
+      const summary = !its.length ? "" : `${bought.length} of ${its.length} bought${spent ? " · " + money(spent) : ""}`;
+      return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${summary}</span>
+        <button class="xbtn" data-editperson="${p.id}" aria-label="Edit ${esc(p.name)}" title="Edit name, group and notes">${PENCIL}</button></div>
         <ul class="items">${its.map((i) => itemRow(i)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
         <button class="btn ghost addidea" data-addfor="${p.id}">+ Add idea</button></article>`;
     };
@@ -313,9 +330,9 @@ function render() {
       : "";
     const add = `<form class="row addperson" id="addPerson"><input id="newPerson" placeholder="Add someone" aria-label="Name"><select id="newPersonGroup" aria-label="Group">${groupOptions(groupFilter)}</select><button class="btn">Add</button></form>`;
     const intro = !data.people.length && !data.items.length
-      ? `<div class="panel"><h2>Start your list</h2><p>Tap the mic and say something like "Mom would love the linen apron from Anthropologie." She'll be added, and the link is found for you.</p></div>`
+      ? `<div class="panel"><h2>Start your list</h2><p>Add someone above, then tap <b>+ Add idea</b> on their card.</p></div>`
       : "";
-    v.innerHTML = banner + intro + add + filters + (sections || (groupFilter ? `<p class="empty">No one in this group yet.</p>` : ""));
+    v.innerHTML = intro + add + filters + (sections || (groupFilter ? `<p class="empty">No one in this group yet.</p>` : ""));
   } else if (view === "ages") {
     const cards = ages().map((a) => {
       const its = data.items.filter((i) => i.age === a.id);
@@ -324,7 +341,7 @@ function render() {
         <form class="row addAgeIdea" data-age="${esc(a.id)}" style="margin-top:8px"><input placeholder="Add a gift" aria-label="Add a gift for ${esc(a.label)}"><button class="btn ghost">Add</button></form></article>`;
     }).join("");
     const add = `<form class="panel" id="addAge"><h3>Add an age</h3><div class="row" style="margin-top:8px"><input id="newAge" placeholder="7, or a label like Teen" aria-label="Age"><button class="btn">Add</button></div></form>`;
-    const intro = `<p class="meta" style="margin:0 0 12px">Your go-to gifts for each age, kept year to year. Tap <b>Give</b> to add one to someone's list. Or tap the mic and say "a good gift for 2 year olds is the Melissa and Doug band set from Target."</p>`;
+    const intro = `<p class="meta" style="margin:0 0 12px">Your go-to gifts for each age, kept year to year. Tap <b>Give</b> to add one to someone's list.</p>`;
     v.innerHTML = intro + `<div class="grid">${cards}${add}</div>`;
   } else if (view === "inbox") {
     const opts = forOptions(false);
@@ -333,11 +350,17 @@ function render() {
       ${i.raw && i.raw !== i.what ? `<p class="meta" style="margin:6px 0 8px">You said: “${esc(i.raw)}”</p>` : ""}
       <div class="row"><select id="file-${i.id}" aria-label="Who is it for">${opts}</select><button class="btn" data-file="${i.id}">File it</button>
       <button class="btn danger" data-drop="${i.id}">Delete</button></div></div>`).join("");
-    v.innerHTML = pendingRows() + (items || (pending.length ? "" : `<p class="empty">Inbox is clear. Ideas that don't name anyone and pages you share land here.</p>`));
+    v.innerHTML = items || `<p class="empty">Inbox is clear. Ideas that don't name anyone and pages you share land here.</p>`;
   } else if (view === "shop") {
-    const todo = data.items.filter((i) => i.status === "idea" && !isAgeIdea(i));
+    const gifts = data.items.filter((i) => !isAgeIdea(i) && !isInbox(i));
+    const todo = gifts.filter((i) => i.status === "idea");
+    // Bought gifts listed under each person, so it's clear who already has something
+    const boughtBy = data.people.map((p) => [p, gifts.filter((i) => i.person === p.id && i.status !== "idea")]).filter(([, its]) => its.length);
+    const total = boughtBy.reduce((a, [, its]) => a + its.length, 0);
     v.innerHTML = `<div class="panel"><div class="phead"><h3>Still to buy</h3><span class="budget num">${todo.length} idea${todo.length === 1 ? "" : "s"}</span></div>
-      <ul class="items">${todo.map((i) => itemRow(i, true)).join("") || "<li class='empty'>Everything is bought.</li>"}</ul></div>`;
+      <ul class="items">${todo.map((i) => itemRow(i, true)).join("") || "<li class='empty'>Everything is bought.</li>"}</ul></div>
+      <div class="panel"><div class="phead"><h3>Already bought</h3><span class="budget num">${total} gift${total === 1 ? "" : "s"}</span></div>
+      ${boughtBy.map(([p, its]) => `<h4 class="who"><span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}</h4><ul class="items">${its.map((i) => itemRow(i)).join("")}</ul>`).join("") || "<p class='empty'>Nothing bought yet. Tap the circle next to a gift to mark it bought.</p>"}</div>`;
   } else {
     const mark = `javascript:void(open('${APP_URL}?title='+encodeURIComponent(document.title)+'&url='+encodeURIComponent(location.href)))`;
     v.innerHTML = `
@@ -392,7 +415,7 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-cycle],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-resync],[data-editperson]");
+  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-resync],[data-editperson]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -419,10 +442,12 @@ document.addEventListener("click", (e) => {
     });
     if (groupFilter === d.ungroup) { groupFilter = ""; saved.set("gl_group", ""); }
   }
-  else if (d.cycle) {
-    commit("Change status", (x) => {
-      const it = byId(x, d.cycle);
-      if (it) it.status = { idea: "bought", bought: "wrapped", wrapped: "idea" }[it.status] || "idea";
+  else if (d.find) findLinks(d.find);
+  else if (d.buy) {
+    const nowBought = byId(data, d.buy)?.status === "idea";
+    commit(nowBought ? "Mark bought" : "Mark not bought", (x) => {
+      const it = byId(x, d.buy);
+      if (it) it.status = nowBought ? "bought" : "idea";
     });
   } else if (d.use) {
     commit("Confirm link", (x) => {
@@ -441,7 +466,7 @@ document.addEventListener("click", (e) => {
         const y = byId(x, d.more);
         if (y?.link) { y.link.rejected = [...(y.link.rejected || []), y.link.hits[y.link.i].url]; y.link.i++; }
       });
-    } else searchAgain(d.more);
+    } else findLinks(d.more);
   } else if (d.paste) {
     pasteOpen = pasteOpen === d.paste ? null : d.paste;
     render();
@@ -482,7 +507,7 @@ document.addEventListener("click", (e) => {
   } else if (d.drop) {
     commit("Delete idea", (x) => { x.items = x.items.filter((i) => i.id !== d.drop); });
   } else if (d.edit) openEdit(d.edit);
-  else if (d.addfor) openCapture(true, d.addfor);
+  else if (d.addfor) openCapture(false, d.addfor);
   else if (d.editperson) openPerson(d.editperson);
   else if (d.unperson) {
     const n = data.items.filter((i) => i.person === d.unperson).length;
@@ -502,10 +527,8 @@ document.addEventListener("submit", async (e) => {
     const what = input.value.trim();
     const age = e.target.dataset.age;
     if (!what) return;
-    commit(`Add idea for ${ageLabel(age)}`, (x) => {
-      x.ages ||= structuredClone(DEFAULT_AGES);
-      x.items.push({ id: newId(), person: null, age, what, note: "", status: "idea", price: null, source: "typed", raw: what, created: new Date().toISOString(), link: { state: "none", hits: [], i: 0, rejected: [] } });
-    });
+    if (!data.ages) commit("Save age lists", (x) => { x.ages ||= structuredClone(DEFAULT_AGES); });
+    addIdea(what, { age });
   } else if (e.target.id === "addAge") {
     e.preventDefault();
     const text = $("newAge").value.trim();
@@ -571,8 +594,10 @@ function openCapture(listenNow, personId = null) {
   $("captureTitle").textContent = name ? `Gift idea for ${name}` : "New gift idea";
   $("captureScrim").hidden = false;
   $("memoText").value = "";
-  $("micHint").textContent = name ? "Say what it is. Name a store to get a link." : "Tap and say who it's for and what it is. Name a store to get a link.";
+  $("micHint").textContent = name ? "Type the gift, or tap the mic to say it. Name a store to get a link." : "Type or tap the mic. Say who it's for and what it is.";
+  $("memoText").placeholder = name ? "Linen apron from Anthropologie" : "Leo wants the Lego orchid set from Target";
   if (listenNow) listen(true);
+  else setTimeout(() => $("memoText").focus(), 50);
 }
 function closeCapture() {
   $("captureScrim").hidden = true;
@@ -619,15 +644,14 @@ $("micBtn").onclick = () => listen(false);
 $("memoText").addEventListener("focus", () => clearTimeout(autoSaveTimer));
 $("captureCancel").onclick = closeCapture;
 $("captureScrim").addEventListener("click", (e) => { if (e.target.id === "captureScrim") closeCapture(); });
-$("captureForm").addEventListener("submit", async (e) => {
+$("captureForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = $("memoText").value.trim();
   if (!text) { $("memoText").focus(); return; }
-  $("captureSave").disabled = true;
-  // The [for:id] tag tells the filer who it's for, so it isn't guessed from the words
-  const ok = await sendIdea("voice", captureFor ? `[for:${captureFor}] ${text}` : text);
-  $("captureSave").disabled = false;
-  if (ok) { closeCapture(); toast(captureFor ? `Saved for ${personName(captureFor)}. Filling in the details now.` : "Saved. It'll be filed in a moment."); }
+  const person = captureFor;
+  closeCapture();
+  addIdea(text, { person, source: "voice" });
+  toast(person ? `Added for ${personName(person)}` : "Added. Working out who it's for…");
 });
 
 // ---------- edit sheet ----------
@@ -643,9 +667,25 @@ function openEdit(id) {
   $("editPrice").value = it.price ?? "";
   $("editStatus").value = it.status;
   $("editLink").value = it.link?.state === "ok" ? it.link.url || "" : "";
+  $("editStore").value = it.link?.store && it.link.state !== "ok" ? it.link.store : "";
   $("editNote").value = it.note || "";
+  syncOpenLink();
   $("editScrim").hidden = false;
 }
+function syncOpenLink() {
+  const url = $("editLink").value.trim();
+  $("editOpen").hidden = !/^https?:\/\//.test(url);
+  $("editOpen").href = url;
+}
+$("editLink").addEventListener("input", syncOpenLink);
+// Saves what's in the panel, then starts a link search for it
+$("editFind").onclick = () => {
+  const id = editing;
+  const store = $("editStore").value.trim();
+  $("editForm").requestSubmit();
+  findLinks(id, store);
+  toast(store ? `Looking at ${store}…` : "Looking online…");
+};
 const closeEdit = () => { $("editScrim").hidden = true; editing = null; };
 // Age-list ideas are never bought themselves, so they have no status
 function syncStatusField() { $("editStatusField").hidden = $("editPerson").value.startsWith("a:"); }
@@ -654,6 +694,7 @@ $("editCancel").onclick = closeEdit;
 $("editScrim").addEventListener("click", (e) => { if (e.target.id === "editScrim") closeEdit(); });
 $("editDelete").onclick = () => {
   const id = editing;
+  if (!confirm(`Delete "${byId(data, id)?.what}"?`)) return;
   closeEdit();
   commit("Delete idea", (x) => { x.items = x.items.filter((i) => i.id !== id); });
   toast("Deleted");
@@ -669,7 +710,8 @@ $("editForm").addEventListener("submit", (e) => {
     note: $("editNote").value.trim(),
   };
   const to = $("editPerson").value;
-  const url = $("editLink").value.trim();
+  let url = $("editLink").value.trim();
+  if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
   closeEdit();
   commit("Edit idea", (x) => {
     const it = byId(x, id);
@@ -678,7 +720,7 @@ $("editForm").addEventListener("submit", (e) => {
     assignTo(it, to);
     const had = it.link?.state === "ok" ? it.link.url : "";
     if (url && url !== had) it.link = { ...(it.link || {}), state: "ok", url, store: host(url) };
-    else if (!url && had) it.link = { state: "none", hits: [], i: 0, rejected: it.link.rejected || [] };
+    else if (!url && had) it.link = { ...noLink(), rejected: it.link.rejected || [] };
   });
 });
 
@@ -770,7 +812,10 @@ load();
 if (isShare) {
   const parts = [sharedTitle, sharedText];
   if (sharedUrl && !(sharedText || "").includes(sharedUrl)) parts.push(sharedUrl);
-  sendIdea("shared", parts.filter(Boolean).join("\n")).then((ok) => ok && toast("Added to your inbox. Filling in the details now."));
+  const raw = parts.filter(Boolean).join("\n");
+  const url = sharedUrl || raw.match(/https?:\/\/\S+/)?.[0] || null;
+  addIdea(raw, { source: "shared", url, title: sharedTitle || (sharedText || "").replace(url || "", "").trim() || host(url || "") });
+  toast("Added to your inbox");
 } else if (voiceShortcut) {
   openCapture(true);
 }

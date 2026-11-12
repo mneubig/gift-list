@@ -50,7 +50,20 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .phead h3{font-size:1.15rem}
 .budget{font-size:.8rem;color:var(--muted)}
 .items{list-style:none;margin:0;padding:0;display:grid}
-.item{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 8px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}
+.item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:4px 10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}
+.check{width:24px;height:24px;border-radius:50%;border:2px solid var(--muted);background:none;color:transparent;display:grid;place-items:center;padding:0;flex:none}
+.check[aria-pressed="true"]{background:var(--pine);border-color:var(--pine);color:var(--surface)}
+.item.done .name{color:var(--muted)}
+.acts{display:flex;align-items:center;gap:4px}
+.acts .xbtn{margin:0}
+.linkbtn{border:0;background:none;padding:0;color:var(--pine);font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.filing{display:inline-flex;align-items:center;gap:6px;font-style:italic}
+.spinner.sm{width:10px;height:10px;border-width:2px}
+.who{display:flex;align-items:center;font-size:.92rem;margin:12px 0 2px}
+.linkset{border:1px solid var(--line);border-radius:10px;padding:10px 12px 4px;margin:0;display:grid;gap:8px;min-width:0}
+.linkset legend{font-size:.78rem;color:var(--muted);font-weight:600;padding:0 4px}
+.linkset .meta{margin:0}
+.sheet.side #editNote{min-height:80px}
 .item .what{min-width:0;overflow-wrap:anywhere;background:none;border:0;padding:0;text-align:left}
 .item .name{background:none;border:0;padding:0;text-align:left;font-weight:500}
 .item .name:hover{text-decoration:underline}
