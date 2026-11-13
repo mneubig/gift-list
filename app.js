@@ -298,7 +298,7 @@ function itemRow(i, showWho, sortable) {
   const grip = sortable ? gripBtn(i) : "";
   return `<li class="item${sortable ? " sortable" : ""}${done && !age ? " done" : ""}" data-id="${i.id}">
     ${grip}${check}
-    <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
+    <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${i.santa ? `<span class="santa" role="img" aria-label="From Santa" title="From Santa">🎅</span>` : ""}${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
     <div class="acts">${age ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>` : ""}<button class="xbtn" data-edit="${i.id}" aria-label="Edit ${esc(i.what)}" title="Edit, add a link, or delete">${PENCIL}</button></div>
     ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}</li>`;
@@ -758,6 +758,7 @@ function openEdit(id) {
   $("editLink").value = it.link?.state === "ok" ? it.link.url || "" : "";
   $("editStore").value = it.link?.store && it.link.state !== "ok" ? it.link.store : "";
   $("editNote").value = it.note || "";
+  $("editSanta").checked = Boolean(it.santa);
   $("editCopyTo").innerHTML = forOptions(false);
   $(`editCopyTo`).querySelector(`option[value="${forValue(it)}"]`)?.remove();
   syncOpenLink();
@@ -811,6 +812,7 @@ $("editForm").addEventListener("submit", (e) => {
     price: priceText === "" || isNaN(+priceText) ? null : +priceText,
     status: $("editStatus").value,
     note: $("editNote").value.trim(),
+    santa: $("editSanta").checked,
   };
   const to = $("editPerson").value;
   let url = $("editLink").value.trim();

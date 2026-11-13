@@ -156,3 +156,7 @@ code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:.88rem;z-index:9;max-width:calc(100% - 32px)}
 @media (prefers-reduced-motion:reduce){.rec button.live,.spinner{animation:none}}
 @media (max-width:420px){.stats{gap:12px}.stat b{font-size:1.15rem}}
+/* "From Santa" checkbox in the gift panel, and the icon beside the gift's name */
+.tick{display:flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;cursor:pointer}
+.tick input{width:18px;height:18px;margin:0;accent-color:var(--berry)}
+.santa{margin-left:6px;font-size:1rem;line-height:1;vertical-align:-1px}
