@@ -296,7 +296,8 @@ function linkBox(i) {
   const buttons = hit
     ? `<button class="btn" data-use="${i.id}">Use this</button><button class="btn ghost" data-more="${i.id}">Keep searching</button>`
     : `<button class="btn ghost" data-more="${i.id}">Search again</button>`;
-  return `<div class="found">${body}<div class="row">${buttons}<button class="btn ghost" data-paste="${i.id}">Paste my own</button></div>${paste}</div>`;
+  const close = `<button class="xbtn close" data-nolink="${i.id}" aria-label="Close. You can find a link later." title="Close">×</button>`;
+  return `<div class="found">${close}${body}<div class="row">${buttons}<button class="btn ghost" data-paste="${i.id}">Paste my own</button></div>${paste}</div>`;
 }
 
 function itemRow(i, showWho, sortable, cardFor) {
@@ -511,7 +512,7 @@ function draw() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop]");
+  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop],[data-nolink]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -604,6 +605,16 @@ document.addEventListener("click", (e) => {
   } else if (d.edit) openEdit(d.edit);
   else if (d.addfor) openCapture(false, d.addfor);
   else if (d.wishedit) openWish(d.wishedit);
+  else if (d.nolink) {
+    // Closes the suggestions; the gift goes back to showing "Find a link", and these links won't be suggested again
+    if (pasteOpen === d.nolink) pasteOpen = null;
+    commit("Dismiss links", (x) => {
+      const it = byId(x, d.nolink);
+      if (!it?.link) return;
+      const seen = (it.link.hits || []).map((h) => h.url);
+      it.link = { ...noLink(), store: it.link.store, rejected: [...new Set([...(it.link.rejected || []), ...seen])] };
+    });
+  }
   else if (d.wishmake) makeWishLink();
   else if (d.wishstop) stopWishLink();
   else if (d.wishcopy) {

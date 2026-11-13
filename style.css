@@ -164,3 +164,7 @@ code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4
 .alsos{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:2px}
 .tick.sm{font-size:.86rem;font-weight:500;color:var(--ink)}
 .tick.sm input{width:16px;height:16px}
+/* Close button on link suggestions */
+.found{position:relative}
+.found .close{position:absolute;top:6px;right:8px;margin:0}
+.found .lbl{padding-right:28px}
