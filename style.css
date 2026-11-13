@@ -176,3 +176,6 @@ code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4
 .phead .pgrip + h3{flex:1}
 .person.dragging{box-shadow:0 10px 26px rgba(0,0,0,.22);position:relative;z-index:3;opacity:.96}
 .person.dragging .pgrip{cursor:grabbing;color:var(--berry)}
+/* Receipt suggestions */
+.amtlbl{margin-left:6px;font-weight:500;opacity:.75;font-size:.75rem}
+.phead .rcbtn{margin-left:auto;align-self:center}

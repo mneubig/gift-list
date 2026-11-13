@@ -326,7 +326,7 @@ function itemRow(i, showWho, sortable, cardFor) {
     <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${i.santa ? `<span class="santa" role="img" aria-label="From Santa" title="From Santa">🎅</span>` : ""}${i.stocking ? `<span class="santa" role="img" aria-label="Stocking stuffer" title="Stocking stuffer">${STOCKING}</span>` : ""}${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
     <div class="acts">${age ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>` : ""}<button class="xbtn" data-edit="${i.id}" aria-label="Edit ${esc(i.what)}" title="Edit, add a link, or delete">${PENCIL}</button></div>
-    ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}</li>`;
+    ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}${receiptBox(i)}</li>`;
 }
 const gripBtn = (i) => `<button class="grip" data-grip="${i.id}" aria-label="Move ${esc(i.what)}. Drag, or use the up and down arrow keys." title="Drag to reorder"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>`;
 
@@ -448,7 +448,7 @@ function draw() {
     const total = boughtBy.reduce((a, g) => a + g.its.length, 0);
     v.innerHTML = `<div class="panel"><div class="phead"><h3>Still to buy</h3><span class="budget num">${todo.length} idea${todo.length === 1 ? "" : "s"}</span></div>
       <ul class="items">${todo.map((i) => itemRow(i, true)).join("") || "<li class='empty'>Everything is bought.</li>"}</ul></div>
-      <div class="panel"><div class="phead"><h3>Already bought</h3><span class="budget num">${total} gift${total === 1 ? "" : "s"}</span></div>
+      <div class="panel"><div class="phead"><h3>Already bought</h3><span class="budget num">${total} gift${total === 1 ? "" : "s"}</span><button class="btn ghost rcbtn" data-rccheck="1" title="Look in Gmail for what you paid for gifts without a price">Check receipts</button></div>
       ${boughtBy.map(({ ids, its }) => `<h4 class="who">${dotsOf(ids)}${esc(namesOf(ids))}</h4><ul class="items">${its.map((i) => itemRow(i)).join("")}</ul>`).join("") || "<p class='empty'>Nothing bought yet. Tap the circle next to a gift to mark it bought.</p>"}</div>`;
   } else if (view === "wish") {
     const list = ranked(data.wish || []);
@@ -505,6 +505,12 @@ function draw() {
         <p>Long-press the Gift List icon and drag <b>Voice idea</b> to your home screen for a one-tap mic button.</p>
         <p>In Amazon or any app, tap <b>Share</b> and pick <b>Gift List</b> to send a product straight to your inbox.</p>
       </div>
+      <form class="panel settings" id="googleForm">
+        <h2>Receipts from Gmail</h2>
+        <p>Lets <b>Check receipts</b> on the Shopping list find what you paid. Emails are read on this device only, and nothing from them is saved except a price you pick.</p>
+        <label class="field">Google client ID<input id="cfgGoogle" autocomplete="off" value="${esc(googleId())}" placeholder="1234-abc.apps.googleusercontent.com"></label>
+        <div class="row"><button class="btn">Save</button>${gEmail ? `<span class="meta">Signed in as ${esc(gEmail)}</span>` : ""}</div>
+      </form>
       <div class="panel settings">
         <h2>Backup</h2>
         <p>Once you're connected, every change is saved to your private <b>${esc(cfg.repo)}</b> repo on GitHub. Every device you connect sees the same list, and app updates never touch it. GitHub keeps every past version${cfg.token ? ` in the <a href="https://github.com/${esc(cfg.owner)}/${esc(cfg.repo)}/commits/main/data.json" target="_blank" rel="noopener">history</a>` : ""}.</p>
@@ -513,11 +519,12 @@ function draw() {
       </div>`;
   }
   if (!cfg.token) setSync("Not backed up", "err");
+  if (googleId()) loadGoogle();
 }
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop],[data-nolink]");
+  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop],[data-nolink],[data-rccheck],[data-rcuse],[data-rcnext],[data-rcclose]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -610,6 +617,15 @@ document.addEventListener("click", (e) => {
   } else if (d.edit) openEdit(d.edit);
   else if (d.addfor) openCapture(false, d.addfor);
   else if (d.wishedit) openWish(d.wishedit);
+  else if (d.rccheck) checkReceipts();
+  else if (d.rcclose) { delete receipts[d.rcclose]; render(); }
+  else if (d.rcnext) { const r = receipts[d.rcnext]; r.i = (r.i + 1) % r.hits.length; render(); }
+  else if (d.rcuse) {
+    const price = Number(d.amount);
+    delete receipts[d.rcuse];
+    commit("Price from receipt", (x) => { const it = byId(x, d.rcuse); if (it) it.price = price; });
+    toast(`Saved ${money(price)}`);
+  }
   else if (d.nolink) {
     // Closes the suggestions; the gift goes back to showing "Find a link", and these links won't be suggested again
     if (pasteOpen === d.nolink) pasteOpen = null;
@@ -696,6 +712,13 @@ document.addEventListener("submit", async (e) => {
       x.groups ||= structuredClone(DEFAULT_GROUPS);
       if (!x.groups.some((g) => g.id === id)) x.groups.push({ id, label, color });
     });
+  } else if (e.target.id === "googleForm") {
+    e.preventDefault();
+    const clientId = $("cfgGoogle").value.trim();
+    if (clientId && !/\.apps\.googleusercontent\.com$/.test(clientId)) { toast("That doesn't look like a client ID. It ends in .apps.googleusercontent.com"); return; }
+    commit("Save Gmail setup", (x) => { x.google = clientId ? { clientId } : undefined; });
+    if (clientId) loadGoogle();
+    toast(clientId ? "Saved. Try Check receipts on the Shopping list." : "Gmail turned off");
   } else if (e.target.id === "connect") {
     e.preventDefault();
     cfg.token = $("cfgToken").value.trim();
@@ -833,6 +856,12 @@ $("editCopy").onclick = () => {
 };
 
 // Saves what's in the panel, then starts a link search for it
+// Saves what's in the panel, then looks for this gift's receipt
+$("editReceipt").onclick = () => {
+  const id = editing;
+  $("editForm").requestSubmit();
+  findReceipt(id);
+};
 $("editFind").onclick = () => {
   const id = editing;
   const store = $("editStore").value.trim();
@@ -842,7 +871,11 @@ $("editFind").onclick = () => {
 };
 const closeEdit = () => { $("editScrim").hidden = true; editing = null; };
 // Age-list ideas are never bought themselves, so they have no status
-function syncStatusField() { $("editStatusField").hidden = $("editPerson").value.startsWith("a:"); }
+function syncStatusField() {
+  const age = $("editPerson").value.startsWith("a:");
+  $("editStatusField").hidden = age;
+  $("editReceipt").hidden = age;
+}
 $("editPerson").onchange = () => { syncStatusField(); fillAlso(alsoChecked()); };
 // "Also for" checkboxes make it a joint gift; they only apply when it's for a person
 const alsoChecked = () => [...$("editAlso").querySelectorAll("input:checked")].map((c) => c.value);
@@ -1131,6 +1164,174 @@ $("wishForm").addEventListener("submit", (e) => {
   commit("Edit wish list", (x) => { const w = x.wish?.find((y) => y.id === id); if (w) Object.assign(w, fields); });
   publishSoon();
 });
+
+// ---------- receipts from Gmail ----------
+// Signs in to Gmail from this browser (read-only), looks for a receipt matching a bought gift, and
+// offers the dollar amounts it finds. Emails are read on this device only: nothing from them is
+// saved or sent anywhere except a price you tap.
+const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
+const receipts = {}; // gift id -> what the search found (this device, this session only)
+let gToken = null;
+let gEmail = "";
+try { const t = JSON.parse(sessionStorage.getItem("gl_gtoken") || "null"); if (t && t.exp > Date.now()) gToken = t; } catch {}
+const googleId = () => data.google?.clientId || "";
+function loadGoogle() {
+  if (window.google?.accounts?.oauth2 || document.getElementById("gsi")) return;
+  const s = document.createElement("script");
+  s.id = "gsi";
+  s.src = "https://accounts.google.com/gsi/client";
+  s.async = true;
+  document.head.appendChild(s);
+}
+// Asks Google for a one-hour token. Must start from a tap, or the sign-in popup is blocked.
+function gmailToken() {
+  if (gToken && gToken.exp > Date.now() + 60e3) return Promise.resolve(gToken.value);
+  return new Promise((resolve, reject) => {
+    if (!window.google?.accounts?.oauth2) { loadGoogle(); reject(new Error("loading")); return; }
+    google.accounts.oauth2.initTokenClient({
+      client_id: googleId(),
+      scope: "https://www.googleapis.com/auth/gmail.readonly",
+      callback: (r) => {
+        if (r.error) { reject(new Error(r.error)); return; }
+        gToken = { value: r.access_token, exp: Date.now() + Number(r.expires_in || 3600) * 1000 };
+        try { sessionStorage.setItem("gl_gtoken", JSON.stringify(gToken)); } catch {}
+        resolve(gToken.value);
+      },
+      error_callback: (e) => reject(new Error(e?.type || "popup_closed")),
+    }).requestAccessToken();
+  });
+}
+async function gmail(path, token) {
+  const res = await fetch(GMAIL + path, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) { gToken = null; try { sessionStorage.removeItem("gl_gtoken"); } catch {} }
+  if (!res.ok) { const e = new Error("Gmail said " + res.status); e.status = res.status; throw e; }
+  return res.json();
+}
+
+const fromB64url = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)));
+// The readable text of an email, preferring its HTML version (receipts are mostly tables)
+function mailText(payload) {
+  let plain = "", html = "";
+  (function walk(p) {
+    if (p.parts) p.parts.forEach(walk);
+    else if (p.body?.data && p.mimeType === "text/plain") plain += fromB64url(p.body.data) + "\n";
+    else if (p.body?.data && p.mimeType === "text/html") html += fromB64url(p.body.data);
+  })(payload);
+  if (html) {
+    const doc = new DOMParser().parseFromString(html.replace(/<(br|\/td|\/th|\/tr|\/p|\/div|\/li|\/h\d)\b[^>]*>/gi, " $&"), "text/html");
+    doc.querySelectorAll("style,script,head").forEach((n) => n.remove());
+    html = doc.body?.textContent || "";
+  }
+  return (html.length > plain.length ? html : plain).replace(/\s+/g, " ");
+}
+const STOP = new Set("the and for with set kit pack size new mini from gift box toy one two".split(" "));
+const keywords = (s) => [...new Set(String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(" ").filter((w) => w.length > 2 && !STOP.has(w)))];
+// Store to search for: from the gift's saved link (shop.cosmody.com means cosmody), else the store it was searched at
+function storeWord(i) {
+  const h = i.link?.state === "ok" && i.link.url ? host(i.link.url) : "";
+  if (h) return h.split(".").slice(-2, -1)[0] || "";
+  return keywords(i.link?.store || "")[0] || "";
+}
+const AMOUNT = /\$\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)/g;
+// Dollar amounts worth offering: the first price after each place the gift's words appear, then the order total
+function amountsIn(text, words) {
+  const lower = text.toLowerCase();
+  const out = [];
+  for (const w of words) {
+    let at = lower.indexOf(w);
+    for (let n = 0; at >= 0 && n < 5; n++) {
+      AMOUNT.lastIndex = at;
+      const m = AMOUNT.exec(text);
+      if (m && m.index - at < 250) out.push({ value: +m[1].replace(/,/g, ""), label: `next to “${w}”` });
+      at = lower.indexOf(w, at + w.length);
+    }
+  }
+  const totals = [...text.matchAll(/(grand total|order total|total charged|amount paid|total)\b[^$]{0,40}\$\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)/gi)].map((m) => +m[2].replace(/,/g, ""));
+  if (totals.length) out.push({ value: Math.max(...totals), label: "order total" });
+  const seen = new Map();
+  for (const a of out) if (a.value > 0 && !seen.has(a.value)) seen.set(a.value, a);
+  return [...seen.values()].slice(0, 4);
+}
+
+async function findReceipt(id) {
+  const it = byId(data, id);
+  if (!it) return;
+  if (!googleId()) { toast("Set up Gmail in Settings first"); view = "settings"; render(); return; }
+  receipts[id] = { state: "searching" };
+  const tokenAsked = gmailToken(); // asked before anything else so the tap still counts for the popup
+  renderSoon();
+  try {
+    const token = await tokenAsked;
+    if (!gEmail) gEmail = (await gmail("/profile", token)).emailAddress || "";
+    const words = keywords(it.what);
+    const store = storeWord(it);
+    const kinds = "(order OR receipt OR confirmation OR invoice OR purchase)";
+    const longest = [...words].sort((a, b) => b.length - a.length).slice(0, 2);
+    const queries = [store && `${store} ${kinds} newer_than:1y`, longest.length && `${longest.join(" ")} ${kinds} newer_than:1y`].filter(Boolean);
+    const ids = [];
+    for (const q of queries) {
+      const r = await gmail(`/messages?maxResults=8&q=${encodeURIComponent(q)}`, token);
+      for (const m of r.messages || []) if (!ids.includes(m.id)) ids.push(m.id);
+    }
+    const hits = [];
+    for (const mid of ids.slice(0, 12)) {
+      const m = await gmail(`/messages/${mid}?format=full`, token);
+      const head = (n) => m.payload?.headers?.find((x) => x.name.toLowerCase() === n)?.value || "";
+      const text = mailText(m.payload || {});
+      const lower = text.toLowerCase();
+      const present = words.filter((w) => lower.includes(w));
+      const fromStore = Boolean(store) && (lower.includes(store) || head("from").toLowerCase().includes(store));
+      const amounts = amountsIn(text, present);
+      if (!amounts.length || (!present.length && !fromStore)) continue;
+      hits.push({
+        score: present.length * 2 + (fromStore ? 1 : 0),
+        subject: head("subject"),
+        from: head("from").replace(/<.*>/, "").replace(/"/g, "").trim(),
+        date: Number(m.internalDate) || 0,
+        url: `https://mail.google.com/mail/?authuser=${encodeURIComponent(gEmail)}#all/${m.threadId}`,
+        amounts,
+      });
+    }
+    hits.sort((a, b) => b.score - a.score || b.date - a.date);
+    receipts[id] = hits.length ? { state: "found", hits: hits.slice(0, 3), i: 0 } : { state: "none" };
+  } catch (e) {
+    const msg = e.message === "loading" ? "Gmail is still loading. Tap again in a moment."
+      : /popup|access_denied/.test(e.message) ? "Gmail sign-in was closed before it finished."
+      : e.status === 403 ? "The Gmail API isn't turned on in your Google project yet."
+      : "Couldn't reach Gmail. Try again in a moment.";
+    receipts[id] = { state: "none", msg };
+  }
+  renderSoon();
+}
+
+// Checks every bought gift that doesn't have a price yet, one at a time
+async function checkReceipts() {
+  const todo = data.items.filter((i) => !isAgeIdea(i) && !isInbox(i) && i.status !== "idea" && (i.price == null || i.price === ""));
+  if (!todo.length) { toast("Every bought gift already has a price"); return; }
+  if (!googleId()) { toast("Set up Gmail in Settings first"); view = "settings"; render(); return; }
+  try { await gmailToken(); } catch (e) {
+    toast(e.message === "loading" ? "Gmail is still loading. Tap again in a moment." : "Gmail sign-in was closed before it finished.");
+    return;
+  }
+  toast(`Checking ${todo.length} gift${todo.length === 1 ? "" : "s"}…`);
+  for (const i of todo) await findReceipt(i.id);
+  const found = todo.filter((i) => receipts[i.id]?.state === "found").length;
+  toast(found ? `Found receipts for ${found} of ${todo.length}. Tap a price to save it.` : "No matching receipts found");
+}
+
+function receiptBox(i) {
+  const r = receipts[i.id];
+  if (!r) return "";
+  if (r.state === "searching") return `<div class="found"><div class="row"><span class="spinner"></span><span class="searching">Looking for a receipt…</span></div></div>`;
+  const close = `<button class="xbtn close" data-rcclose="${i.id}" aria-label="Close" title="Close">×</button>`;
+  if (r.state !== "found") return `<div class="found">${close}<div class="lbl">No receipt found</div><div class="meta">${esc(r.msg || "Nothing in Gmail matched this gift.")}</div></div>`;
+  const hit = r.hits[r.i];
+  const when = hit.date ? " · " + new Date(hit.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  return `<div class="found">${close}<div class="lbl">Receipt${r.hits.length > 1 ? ` ${r.i + 1} of ${r.hits.length}` : ""}: what did it cost?</div>
+    <div class="hit"><a href="${esc(hit.url)}" target="_blank" rel="noopener">${esc(hit.subject || "(no subject)")}</a> <span class="meta">${esc(hit.from)}${when}</span></div>
+    <div class="row">${hit.amounts.map((a, n) => `<button class="btn${n ? " ghost" : ""}" data-rcuse="${i.id}" data-amount="${a.value}">Use ${money(a.value)}<small class="amtlbl">${esc(a.label)}</small></button>`).join("")}
+    ${r.hits.length > 1 ? `<button class="btn ghost" data-rcnext="${i.id}">Different receipt</button>` : ""}</div></div>`;
+}
 
 let toastTimer;
 function toast(msg) {
