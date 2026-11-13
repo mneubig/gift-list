@@ -59,6 +59,24 @@ const noLink = () => ({ state: "none", hits: [], i: 0, rejected: [] });
 // Ideas you've ranked come first in your order; unranked ones follow, oldest first
 const ranked = (items) => [...items].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || String(a.created || "").localeCompare(String(b.created || "")));
 
+// Joint gifts: `person` is who it was first for, `also` lists anyone else it's shared with.
+// It's one gift on every one of their cards; `ranks` keeps its place on each card.
+const forPeople = (i) => [i.person, ...(i.also || [])].filter((id, n, a) => id && personName(id) && a.indexOf(id) === n);
+const rankFor = (i, pid) => i.ranks?.[pid] ?? (pid === i.person ? i.rank : undefined);
+const rankedFor = (items, pid) => [...items].sort((a, b) => (rankFor(a, pid) ?? Infinity) - (rankFor(b, pid) ?? Infinity) || String(a.created || "").localeCompare(String(b.created || "")));
+const namesOf = (ids) => ids.map(personName).join(" + ");
+const dotsOf = (ids) => ids.map((id) => `<span class="dot" style="--c:${colorOf(data.people.find((p) => p.id === id))}"></span>`).join("");
+// Removing someone keeps joint gifts with whoever else they're for; solo gifts go to the inbox
+function dropPerson(x, id) {
+  x.people = x.people.filter((p) => p.id !== id);
+  x.items.forEach((i) => {
+    if (i.also) i.also = i.also.filter((y) => y !== id);
+    if (i.person === id) i.person = i.also?.shift() || null;
+    if (i.also && !i.also.length) delete i.also;
+    if (i.ranks) delete i.ranks[id];
+  });
+}
+
 // "Who or what is it for" picker values: p:<person id> or a:<age id>
 function forOptions(withInbox) {
   const people = data.people.map((p) => `<option value="p:${p.id}">${esc(p.name)}</option>`).join("");
@@ -72,6 +90,8 @@ function assignTo(it, value) {
   it.person = kind === "p" ? id : null;
   it.age = kind === "a" ? id : null;
   if (it.age) it.status = "idea";
+  if (!it.person) delete it.also;
+  else if (it.also) it.also = it.also.filter((y) => y !== it.person);
 }
 const forValue = (it) => (isAgeIdea(it) ? "a:" + it.age : it.person && personName(it.person) ? "p:" + it.person : "");
 
@@ -249,7 +269,7 @@ function stats() {
   $("countdown").textContent = days > 0 ? `${days} days until Dec 25` : "Happy holidays";
   const bought = data.items.filter((i) => i.status !== "idea" && !isAgeIdea(i));
   $("spent").textContent = money(bought.reduce((a, i) => a + (Number(i.price) || 0), 0));
-  const covered = new Set(bought.map((i) => i.person));
+  const covered = new Set(bought.flatMap(forPeople));
   $("todo").textContent = `${data.people.filter((p) => !covered.has(p.id)).length} of ${data.people.length}`;
   $("links").textContent = data.items.filter((i) => ["pending", "notfound"].includes(i.link?.state)).length;
   const inboxN = data.items.filter(isInbox).length;
@@ -279,11 +299,15 @@ function linkBox(i) {
   return `<div class="found">${body}<div class="row">${buttons}<button class="btn ghost" data-paste="${i.id}">Paste my own</button></div>${paste}</div>`;
 }
 
-function itemRow(i, showWho, sortable) {
+function itemRow(i, showWho, sortable, cardFor) {
   const bits = [];
   if (showWho) {
-    const p = data.people.find((x) => x.id === i.person);
-    bits.push(p ? `<span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}` : "Inbox");
+    const ids = forPeople(i);
+    bits.push(ids.length ? dotsOf(ids) + esc(namesOf(ids)) : "Inbox");
+  }
+  if (cardFor) {
+    const others = forPeople(i).filter((id) => id !== cardFor);
+    if (others.length) bits.push(`<span class="tag">with ${esc(namesOf(others))}</span>`);
   }
   if (i.link?.state === "ok" && i.link.url) bits.push(`<a href="${esc(i.link.url)}" target="_blank" rel="noopener">${esc(host(i.link.url))} ↗</a>`);
   if (i.status === "wrapped") bits.push("<span class='tag'>wrapped</span>");
@@ -357,13 +381,13 @@ function draw() {
 
   if (view === "people") {
     const card = (p) => {
-      const its = data.items.filter((i) => i.person === p.id);
+      const its = data.items.filter((i) => forPeople(i).includes(p.id));
       const bought = its.filter((i) => i.status !== "idea");
       const spent = bought.reduce((a, i) => a + (Number(i.price) || 0), 0);
       const summary = !its.length ? "" : `${bought.length} of ${its.length} bought${spent ? " · " + money(spent) : ""}`;
       return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${summary}</span>
         <button class="xbtn" data-editperson="${p.id}" aria-label="Edit ${esc(p.name)}" title="Edit name, group and notes">${PENCIL}</button></div>
-        <ul class="items">${ranked(its).map((i) => itemRow(i, false, its.length > 1)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
+        <ul class="items" data-person="${p.id}">${rankedFor(its, p.id).map((i) => itemRow(i, false, its.length > 1, p.id)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
         <button class="btn ghost addidea" data-addfor="${p.id}">+ Add idea</button></article>`;
     };
     // One section per group, then anyone without a group
@@ -405,12 +429,21 @@ function draw() {
     const gifts = data.items.filter((i) => !isAgeIdea(i) && !isInbox(i));
     const todo = gifts.filter((i) => i.status === "idea");
     // Bought gifts listed under each person, so it's clear who already has something
-    const boughtBy = data.people.map((p) => [p, gifts.filter((i) => i.person === p.id && i.status !== "idea")]).filter(([, its]) => its.length);
-    const total = boughtBy.reduce((a, [, its]) => a + its.length, 0);
+    // Joint gifts get their own heading (like "Kimi + Enzo") so each is listed once
+    const byWho = new Map();
+    for (const i of gifts.filter((g) => g.status !== "idea")) {
+      const ids = forPeople(i);
+      const key = ids.join("+");
+      if (!byWho.has(key)) byWho.set(key, { ids, its: [] });
+      byWho.get(key).its.push(i);
+    }
+    const first = (ids) => Math.min(...ids.map((id) => data.people.findIndex((p) => p.id === id)));
+    const boughtBy = [...byWho.values()].sort((a, b) => first(a.ids) - first(b.ids) || a.ids.length - b.ids.length);
+    const total = boughtBy.reduce((a, g) => a + g.its.length, 0);
     v.innerHTML = `<div class="panel"><div class="phead"><h3>Still to buy</h3><span class="budget num">${todo.length} idea${todo.length === 1 ? "" : "s"}</span></div>
       <ul class="items">${todo.map((i) => itemRow(i, true)).join("") || "<li class='empty'>Everything is bought.</li>"}</ul></div>
       <div class="panel"><div class="phead"><h3>Already bought</h3><span class="budget num">${total} gift${total === 1 ? "" : "s"}</span></div>
-      ${boughtBy.map(([p, its]) => `<h4 class="who"><span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}</h4><ul class="items">${its.map((i) => itemRow(i)).join("")}</ul>`).join("") || "<p class='empty'>Nothing bought yet. Tap the circle next to a gift to mark it bought.</p>"}</div>`;
+      ${boughtBy.map(({ ids, its }) => `<h4 class="who">${dotsOf(ids)}${esc(namesOf(ids))}</h4><ul class="items">${its.map((i) => itemRow(i)).join("")}</ul>`).join("") || "<p class='empty'>Nothing bought yet. Tap the circle next to a gift to mark it bought.</p>"}</div>`;
   } else if (view === "wish") {
     const list = ranked(data.wish || []);
     const share = data.wishShare || {};
@@ -583,11 +616,10 @@ document.addEventListener("click", (e) => {
   }
   else if (d.editperson) openPerson(d.editperson);
   else if (d.unperson) {
-    const n = data.items.filter((i) => i.person === d.unperson).length;
+    const n = data.items.filter((i) => i.person === d.unperson && !forPeople(i).some((y) => y !== d.unperson)).length;
     if (!confirm(`Remove ${personName(d.unperson)}?${n ? ` Their ${n} idea${n > 1 ? "s" : ""} will move to the inbox.` : ""}`)) return;
     commit("Remove person", (x) => {
-      x.people = x.people.filter((p) => p.id !== d.unperson);
-      x.items.forEach((i) => { if (i.person === d.unperson) i.person = null; });
+      dropPerson(x, d.unperson);
     });
     toast("Removed. Their ideas moved to the inbox.");
   }
@@ -752,6 +784,7 @@ function openEdit(id) {
   $("editWhat").value = it.what;
   $("editPerson").innerHTML = forOptions(true);
   $("editPerson").value = forValue(it);
+  fillAlso(it.also || []);
   syncStatusField();
   $("editPrice").value = it.price ?? "";
   $("editStatus").value = it.status;
@@ -775,7 +808,7 @@ $("editCopy").onclick = () => {
   const src = byId(data, editing);
   const to = $("editCopyTo").value;
   if (!src || !to) return;
-  const copy = { ...structuredClone(src), id: newId(), what: $("editWhat").value.trim() || src.what, note: $("editNote").value.trim(), status: "idea", filing: false, rank: undefined, created: new Date().toISOString() };
+  const copy = { ...structuredClone(src), id: newId(), what: $("editWhat").value.trim() || src.what, note: $("editNote").value.trim(), status: "idea", filing: false, rank: undefined, ranks: undefined, also: undefined, created: new Date().toISOString() };
   if (copy.link?.state === "searching") copy.link = noLink();
   assignTo(copy, to);
   commit("Copy idea", (x) => { if (!byId(x, copy.id)) x.items.push(structuredClone(copy)); });
@@ -793,7 +826,16 @@ $("editFind").onclick = () => {
 const closeEdit = () => { $("editScrim").hidden = true; editing = null; };
 // Age-list ideas are never bought themselves, so they have no status
 function syncStatusField() { $("editStatusField").hidden = $("editPerson").value.startsWith("a:"); }
-$("editPerson").onchange = syncStatusField;
+$("editPerson").onchange = () => { syncStatusField(); fillAlso(alsoChecked()); };
+// "Also for" checkboxes make it a joint gift; they only apply when it's for a person
+const alsoChecked = () => [...$("editAlso").querySelectorAll("input:checked")].map((c) => c.value);
+function fillAlso(checked) {
+  const v = $("editPerson").value;
+  const primary = v.startsWith("p:") ? v.slice(2) : null;
+  $("editAlsoField").hidden = !primary || data.people.length < 2;
+  $("editAlso").innerHTML = data.people.filter((p) => p.id !== primary)
+    .map((p) => `<label class="tick sm"><input type="checkbox" value="${p.id}"${checked.includes(p.id) ? " checked" : ""}> ${esc(p.name)}</label>`).join("");
+}
 $("editCancel").onclick = closeEdit;
 $("editScrim").addEventListener("click", (e) => { if (e.target.id === "editScrim") closeEdit(); });
 $("editDelete").onclick = () => {
@@ -815,6 +857,7 @@ $("editForm").addEventListener("submit", (e) => {
     santa: $("editSanta").checked,
   };
   const to = $("editPerson").value;
+  const also = $("editAlsoField").hidden ? [] : alsoChecked();
   let url = $("editLink").value.trim();
   if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
   closeEdit();
@@ -822,7 +865,9 @@ $("editForm").addEventListener("submit", (e) => {
     const it = byId(x, id);
     if (!it) return;
     Object.assign(it, fields);
+    it.also = also;
     assignTo(it, to);
+    if (!it.also?.length) delete it.also;
     const had = it.link?.state === "ok" ? it.link.url : "";
     if (url && url !== had) it.link = { ...(it.link || {}), state: "ok", url, store: host(url) };
     else if (!url && had) it.link = { ...noLink(), rejected: it.link.rejected || [] };
@@ -833,8 +878,13 @@ $("editForm").addEventListener("submit", (e) => {
 // Saves the order of a list's rows as each idea's rank
 function saveOrder(list) {
   const ids = [...list.querySelectorAll(":scope > .item[data-id]")].map((li) => li.dataset.id);
+  const pid = list.dataset.person;
   const wish = list.dataset.kind === "wish";
-  commit("Reorder ideas", (x) => ids.forEach((id, rank) => { const it = wish ? x.wish?.find((w) => w.id === id) : byId(x, id); if (it) it.rank = rank; }));
+  commit("Reorder ideas", (x) => ids.forEach((id, rank) => { const it = wish ? x.wish?.find((w) => w.id === id) : byId(x, id);
+    if (!it) return;
+    if (pid) it.ranks = { ...(it.ranks || {}), [pid]: rank };
+    if (!pid || pid === it.person) it.rank = rank;
+  }));
   if (wish) publishSoon();
 }
 
@@ -898,12 +948,11 @@ $("personCancel").onclick = closePerson;
 $("personScrim").addEventListener("click", (e) => { if (e.target.id === "personScrim") closePerson(); });
 $("personDelete").onclick = () => {
   const id = editingPerson;
-  const n = data.items.filter((i) => i.person === id).length;
+  const n = data.items.filter((i) => i.person === id && !forPeople(i).some((y) => y !== id)).length;
   if (!confirm(`Remove ${personName(id)}?${n ? ` Their ${n} idea${n > 1 ? "s" : ""} will move to the inbox.` : ""}`)) return;
   closePerson();
   commit("Remove person", (x) => {
-    x.people = x.people.filter((p) => p.id !== id);
-    x.items.forEach((i) => { if (i.person === id) i.person = null; });
+    dropPerson(x, id);
   });
   toast("Removed. Their ideas moved to the inbox.");
 };

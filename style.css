@@ -160,3 +160,7 @@ code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4
 .tick{display:flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;cursor:pointer}
 .tick input{width:18px;height:18px;margin:0;accent-color:var(--berry)}
 .santa{margin-left:6px;font-size:1rem;line-height:1;vertical-align:-1px}
+/* "Also for" checkboxes for joint gifts */
+.alsos{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:2px}
+.tick.sm{font-size:.86rem;font-weight:500;color:var(--ink)}
+.tick.sm input{width:16px;height:16px}
