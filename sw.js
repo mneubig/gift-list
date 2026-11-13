@@ -1,5 +1,5 @@
 // Keeps the app shell available offline. Your list itself always comes from GitHub.
-const CACHE = "gift-list-v16";
+const CACHE = "gift-list-v17";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

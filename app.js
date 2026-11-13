@@ -509,7 +509,7 @@ function draw() {
         <h2>Receipts from Gmail</h2>
         <p>Lets <b>Check receipts</b> on the Shopping list find what you paid. Emails are read on this device only, and nothing from them is saved except a price you pick.</p>
         <label class="field">Google client ID<input id="cfgGoogle" autocomplete="off" value="${esc(googleId())}" placeholder="1234-abc.apps.googleusercontent.com"></label>
-        <div class="row"><button class="btn">Save</button>${gEmail ? `<span class="meta">Signed in as ${esc(gEmail)}</span>` : ""}</div>
+        <div class="row"><button class="btn">Save</button>${gEmail ? `<span class="meta">Using ${esc(gEmail)} · <button type="button" class="linkbtn" data-rcforget="1">Use a different account</button></span>` : ""}</div>
       </form>
       <div class="panel settings">
         <h2>Backup</h2>
@@ -524,7 +524,7 @@ function draw() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop],[data-nolink],[data-rccheck],[data-rcuse],[data-rcnext],[data-rcclose]");
+  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop],[data-nolink],[data-rccheck],[data-rcuse],[data-rcnext],[data-rcclose],[data-rcforget]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -618,6 +618,7 @@ document.addEventListener("click", (e) => {
   else if (d.addfor) openCapture(false, d.addfor);
   else if (d.wishedit) openWish(d.wishedit);
   else if (d.rccheck) checkReceipts();
+  else if (d.rcforget) { forgetGmail(); render(); toast("You'll pick an account next time you check receipts"); }
   else if (d.rcclose) { delete receipts[d.rcclose]; render(); }
   else if (d.rcnext) { const r = receipts[d.rcnext]; r.i = (r.i + 1) % r.hits.length; render(); }
   else if (d.rcuse) {
@@ -1172,8 +1173,11 @@ $("wishForm").addEventListener("submit", (e) => {
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const receipts = {}; // gift id -> what the search found (this device, this session only)
 let gToken = null;
-let gEmail = "";
-try { const t = JSON.parse(sessionStorage.getItem("gl_gtoken") || "null"); if (t && t.exp > Date.now()) gToken = t; } catch {}
+// The account is remembered on this device so later sign-ins skip the account picker and consent screen,
+// and the token is kept for its full hour even if the app is closed
+let gEmail = saved.get("gl_gmail") || "";
+try { const t = JSON.parse(saved.get("gl_gtoken") || "null"); if (t && t.exp > Date.now()) gToken = t; } catch {}
+const forgetGmail = () => { gToken = null; gEmail = ""; try { localStorage.removeItem("gl_gtoken"); localStorage.removeItem("gl_gmail"); } catch {} };
 const googleId = () => data.google?.clientId || "";
 function loadGoogle() {
   if (window.google?.accounts?.oauth2 || document.getElementById("gsi")) return;
@@ -1190,11 +1194,14 @@ function gmailToken() {
     if (!window.google?.accounts?.oauth2) { loadGoogle(); reject(new Error("loading")); return; }
     google.accounts.oauth2.initTokenClient({
       client_id: googleId(),
+      // After the first time, ask for no screens: Google opens and closes its window on its own
+      prompt: gEmail ? "" : "select_account",
+      hint: gEmail || undefined,
       scope: "https://www.googleapis.com/auth/gmail.readonly",
       callback: (r) => {
         if (r.error) { reject(new Error(r.error)); return; }
         gToken = { value: r.access_token, exp: Date.now() + Number(r.expires_in || 3600) * 1000 };
-        try { sessionStorage.setItem("gl_gtoken", JSON.stringify(gToken)); } catch {}
+        saved.set("gl_gtoken", JSON.stringify(gToken));
         resolve(gToken.value);
       },
       error_callback: (e) => reject(new Error(e?.type || "popup_closed")),
@@ -1203,7 +1210,7 @@ function gmailToken() {
 }
 async function gmail(path, token) {
   const res = await fetch(GMAIL + path, { headers: { Authorization: `Bearer ${token}` } });
-  if (res.status === 401) { gToken = null; try { sessionStorage.removeItem("gl_gtoken"); } catch {} }
+  if (res.status === 401) { gToken = null; try { localStorage.removeItem("gl_gtoken"); } catch {} }
   if (!res.ok) { const e = new Error("Gmail said " + res.status); e.status = res.status; throw e; }
   return res.json();
 }
@@ -1262,7 +1269,7 @@ async function findReceipt(id) {
   renderSoon();
   try {
     const token = await tokenAsked;
-    if (!gEmail) gEmail = (await gmail("/profile", token)).emailAddress || "";
+    if (!gEmail) { gEmail = (await gmail("/profile", token)).emailAddress || ""; saved.set("gl_gmail", gEmail); }
     const words = keywords(it.what);
     const store = storeWord(it);
     const kinds = "(order OR receipt OR confirmation OR invoice OR purchase)";
