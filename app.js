@@ -323,7 +323,7 @@ function itemRow(i, showWho, sortable, cardFor) {
   const grip = sortable ? gripBtn(i) : "";
   return `<li class="item${sortable ? " sortable" : ""}${done && !age ? " done" : ""}" data-id="${i.id}">
     ${grip}${check}
-    <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${i.santa ? `<span class="santa" role="img" aria-label="From Santa" title="From Santa">🎅</span>` : ""}${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
+    <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${i.santa ? `<span class="santa" role="img" aria-label="From Santa" title="From Santa">🎅</span>` : ""}${i.stocking ? `<span class="santa" role="img" aria-label="Stocking stuffer" title="Stocking stuffer">${STOCKING}</span>` : ""}${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
     <div class="acts">${age ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>` : ""}<button class="xbtn" data-edit="${i.id}" aria-label="Edit ${esc(i.what)}" title="Edit, add a link, or delete">${PENCIL}</button></div>
     ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}</li>`;
@@ -341,6 +341,7 @@ function wishRow(w, sortable) {
     <span class="price num">${w.price != null && w.price !== "" ? money(w.price) : ""}</span>
     <div class="acts"><button class="xbtn" data-wishedit="${w.id}" aria-label="Edit ${esc(w.what)}" title="Edit or delete">${PENCIL}</button></div></li>`;
 }
+const STOCKING = `<svg viewBox="0 0 24 24" width="16" height="16"><path d="M8 6.5h8v7.2c0 .7-.3 1.4-.8 1.9l-3.6 3.6c-1.2 1.2-2.8 1.8-4.5 1.8H5.8C4.2 21 3 19.8 3 18.2c0-1.1.6-2.1 1.6-2.6L8 13.6z" fill="#d64545"/><rect x="7" y="2.5" width="10" height="4.5" rx="1.2" fill="#fff" stroke="#c9ced3" stroke-width=".8"/><path d="M3.9 16.6c1 .1 1.8.9 1.9 1.9M3.4 19.4" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round" opacity=".85"/></svg>`;
 const PENCIL = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>`;
 
 function giveBox(i) {
@@ -368,7 +369,10 @@ function render() {
   const a = document.activeElement;
   const keep = a && a.id && $("view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)
     ? { id: a.id, value: a.value, start: a.selectionStart, end: a.selectionEnd } : null;
+  // A focused drag handle keeps focus too, so arrow keys can keep moving the same row or card
+  const grip = a?.matches?.(".grip") && $("view").contains(a) ? (a.dataset.pgrip ? `[data-pgrip="${a.dataset.pgrip}"]` : `[data-grip="${a.dataset.grip}"]`) : null;
   try { draw(); } finally {
+    if (grip) $("view").querySelector(grip)?.focus();
     const el = keep && $(keep.id);
     if (el) { el.value = keep.value; el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch {} }
   }
@@ -381,12 +385,13 @@ function draw() {
   const v = $("view");
 
   if (view === "people") {
-    const card = (p) => {
+    const card = (p, movable) => {
       const its = data.items.filter((i) => forPeople(i).includes(p.id));
       const bought = its.filter((i) => i.status !== "idea");
       const spent = bought.reduce((a, i) => a + (Number(i.price) || 0), 0);
       const summary = !its.length ? "" : `${bought.length} of ${its.length} bought${spent ? " · " + money(spent) : ""}`;
-      return `<article class="panel person" style="--c:${colorOf(p)}"><div class="phead"><h3>${esc(p.name)}</h3><span class="budget num">${summary}</span>
+      const grip = movable ? `<button class="grip pgrip" data-pgrip="${p.id}" aria-label="Move ${esc(p.name)}'s card. Drag, or use the arrow keys." title="Drag to move this card"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>` : "";
+      return `<article class="panel person" data-id="${p.id}" style="--c:${colorOf(p)}"><div class="phead">${grip}<h3>${esc(p.name)}</h3><span class="budget num">${summary}</span>
         <button class="xbtn" data-editperson="${p.id}" aria-label="Edit ${esc(p.name)}" title="Edit name, group and notes">${PENCIL}</button></div>
         <ul class="items" data-person="${p.id}">${rankedFor(its, p.id).map((i) => itemRow(i, false, its.length > 1, p.id)).join("") || "<li class='empty'>No ideas yet</li>"}</ul>
         <button class="btn ghost addidea" data-addfor="${p.id}">+ Add idea</button></article>`;
@@ -398,7 +403,7 @@ function draw() {
         const ps = data.people.filter((p) => (groupOf(p)?.id || "") === g.id);
         if (!ps.length) return "";
         return `<section class="group"><h2 class="ghead"><span class="dot" style="--c:${COLORS[g.color] || "var(--muted)"}"></span>${esc(g.label)} <span class="meta">${ps.length}</span></h2>
-          <div class="grid">${ps.map(card).join("")}</div></section>`;
+          <div class="grid" data-cards="1">${ps.map((p) => card(p, ps.length > 1)).join("")}</div></section>`;
       }).join("");
     const filters = data.people.length
       ? `<div class="filters">${[{ id: "", label: "Everyone" }, ...groups()].map((g) => `<button class="filter" data-group="${esc(g.id)}" aria-pressed="${g.id === groupFilter}">${g.color ? `<span class="dot" style="--c:${COLORS[g.color]}"></span>` : ""}${esc(g.label)}</button>`).join("")}</div>`
@@ -803,6 +808,7 @@ function openEdit(id) {
   $("editStore").value = it.link?.store && it.link.state !== "ok" ? it.link.store : "";
   $("editNote").value = it.note || "";
   $("editSanta").checked = Boolean(it.santa);
+  $("editStocking").checked = Boolean(it.stocking);
   $("editCopyTo").innerHTML = forOptions(false);
   $(`editCopyTo`).querySelector(`option[value="${forValue(it)}"]`)?.remove();
   syncOpenLink();
@@ -866,6 +872,7 @@ $("editForm").addEventListener("submit", (e) => {
     status: $("editStatus").value,
     note: $("editNote").value.trim(),
     santa: $("editSanta").checked,
+    stocking: $("editStocking").checked,
   };
   const to = $("editPerson").value;
   const also = $("editAlsoField").hidden ? [] : alsoChecked();
@@ -899,30 +906,43 @@ function saveOrder(list) {
   if (wish) publishSoon();
 }
 
+// Saves the order of a group's cards as the order of the people list; people in other groups keep their places
+function savePeopleOrder(grid) {
+  const ids = [...grid.querySelectorAll(":scope > .person[data-id]")].map((c) => c.dataset.id);
+  commit("Reorder people", (x) => {
+    const slots = x.people.map((p, n) => (ids.includes(p.id) ? n : -1)).filter((n) => n >= 0);
+    const moved = ids.map((id) => x.people.find((p) => p.id === id)).filter(Boolean);
+    slots.forEach((slot, k) => { x.people[slot] = moved[k]; });
+  });
+}
+
 // Drag by the grip with a finger or mouse; the row moves live as you pass other rows
 let drag = null;
 document.addEventListener("pointerdown", (e) => {
   const grip = e.target.closest(".grip");
   if (!grip || e.button > 0) return;
   e.preventDefault();
-  const li = grip.closest(".item");
-  drag = { li, list: li.parentElement, before: li.nextElementSibling, pointer: e.pointerId };
+  const li = grip.closest(".item, .person");
+  const card = li.classList.contains("person");
+  drag = { li, card, sel: card ? ":scope > .person[data-id]" : ":scope > .item[data-id]", list: li.parentElement, before: li.nextElementSibling, pointer: e.pointerId };
   grip.setPointerCapture?.(e.pointerId);
   li.classList.add("dragging");
 });
 document.addEventListener("pointermove", (e) => {
   if (!drag || e.pointerId !== drag.pointer) return;
   e.preventDefault();
-  const rows = [...drag.list.querySelectorAll(":scope > .item[data-id]")].filter((r) => r !== drag.li);
-  const next = rows.find((r) => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
+  const rows = [...drag.list.querySelectorAll(drag.sel)].filter((r) => r !== drag.li);
+  const next = drag.card
+    ? rows.find((r) => { const b = r.getBoundingClientRect(); return e.clientY < b.top || (e.clientY < b.bottom && e.clientX < b.left + b.width / 2); })
+    : rows.find((r) => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
   if (next !== drag.li.nextElementSibling) drag.list.insertBefore(drag.li, next || null);
 });
 function endDrag(e) {
   if (!drag || (e && e.pointerId !== drag.pointer)) return;
-  const { li, list, before, rerender } = drag;
+  const { li, list, before, rerender, card } = drag;
   li.classList.remove("dragging");
   drag = null;
-  if (li.nextElementSibling !== before) saveOrder(list);
+  if (li.nextElementSibling !== before) (card ? savePeopleOrder : saveOrder)(list);
   else if (rerender) render();
 }
 document.addEventListener("pointerup", endDrag);
@@ -930,16 +950,21 @@ document.addEventListener("pointercancel", endDrag);
 // Keyboard: arrow keys on a focused grip move the row one place
 document.addEventListener("keydown", (e) => {
   const grip = e.target.closest?.(".grip");
-  if (!grip || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+  if (!grip) return;
+  const li = grip.closest(".item, .person");
+  const card = li.classList.contains("person");
+  // Cards sit in a grid, so left/right move them too
+  const up = e.key === "ArrowUp" || (card && e.key === "ArrowLeft");
+  const down = e.key === "ArrowDown" || (card && e.key === "ArrowRight");
+  if (!up && !down) return;
   e.preventDefault();
-  const li = grip.closest(".item");
-  const sib = e.key === "ArrowUp" ? li.previousElementSibling : li.nextElementSibling?.nextElementSibling ?? null;
-  if (e.key === "ArrowUp" && !sib) return;
-  if (e.key === "ArrowDown" && !li.nextElementSibling) return;
+  const sib = up ? li.previousElementSibling : li.nextElementSibling?.nextElementSibling ?? null;
+  if (up && !sib) return;
+  if (down && !li.nextElementSibling) return;
   const id = li.dataset.id;
   li.parentElement.insertBefore(li, sib);
-  saveOrder(li.parentElement);
-  $("view").querySelector(`.grip[data-grip="${id}"]`)?.focus();
+  (card ? savePeopleOrder : saveOrder)(li.parentElement);
+  $("view").querySelector(`.grip[data-${card ? "pgrip" : "grip"}="${id}"]`)?.focus();
 });
 
 // ---------- person panel ----------

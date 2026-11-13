@@ -168,3 +168,11 @@ code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:1px 4
 .found{position:relative}
 .found .close{position:absolute;top:6px;right:8px;margin:0}
 .found .lbl{padding-right:28px}
+/* Santa and stocking checkboxes side by side; stocking icon sized like the emoji */
+.ticks{display:flex;flex-wrap:wrap;gap:8px 20px}
+.santa svg{display:inline-block;width:1em;height:1em;vertical-align:-2px}
+/* Grip for moving a person's card */
+.phead .pgrip{align-self:center;margin:0 -2px 0 -8px}
+.phead .pgrip + h3{flex:1}
+.person.dragging{box-shadow:0 10px 26px rgba(0,0,0,.22);position:relative;z-index:3;opacity:.96}
+.person.dragging .pgrip{cursor:grabbing;color:var(--berry)}
