@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Wish list</title>
+<meta name="theme-color" content="#b4234a">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Figtree:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* A read-only page for people you send your wish list to. It only loads the list itself. */
+  body{padding-bottom:calc(40px + env(safe-area-inset-bottom,0px))}
+  .wrap{max-width:640px}
+  .top h1{font-size:2rem}
+  .wl{list-style:none;margin:0;padding:0}
+  .wl li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 12px;align-items:start;padding:14px 0;border-top:1px dashed var(--line)}
+  .wl li:first-child{border-top:0}
+  .wl .n{font-family:var(--display);font-weight:700;color:var(--berry);min-width:1.4em;font-variant-numeric:tabular-nums}
+  .wl .w{font-weight:600}
+  .wl .d{color:var(--muted);font-size:.88rem;margin-top:2px;overflow-wrap:anywhere}
+  .wl .r{text-align:right;display:grid;gap:6px;justify-items:end}
+  .wl .p{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.9rem}
+  .wl a.btn{text-decoration:none;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><div><h1 id="title">Wish list</h1><div class="sub" id="sub"></div></div></header>
+  <main class="panel" id="list"><p class="empty">Loading…</p></main>
+</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const money = (n) => "$" + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
+const fail = (msg) => { $("list").innerHTML = `<p class="empty">${esc(msg)}</p>`; };
+
+async function show() {
+  const id = new URLSearchParams(location.search).get("g");
+  if (!/^[0-9a-f]{20,40}$/i.test(id || "")) return fail("This link isn't complete. Ask for it again.");
+  let list;
+  try {
+    const res = await fetch(`https://api.github.com/gists/${id}`, { headers: { Accept: "application/vnd.github+json" } });
+    if (res.status === 404) return fail("This wish list isn't shared anymore.");
+    if (!res.ok) throw new Error();
+    const file = (await res.json()).files["wishlist.json"];
+    list = JSON.parse(file.truncated ? await (await fetch(file.raw_url)).text() : file.content);
+  } catch {
+    return fail("Couldn't load the list. Check your connection and refresh.");
+  }
+  document.title = $("title").textContent = list.title || "Wish list";
+  if (list.updated) $("sub").textContent = "Updated " + new Date(list.updated).toLocaleDateString(undefined, { month: "long", day: "numeric" });
+  const items = list.items || [];
+  if (!items.length) return fail("Nothing on the list yet. Check back soon.");
+  $("list").innerHTML = `<ol class="wl">${items.map((w, n) => {
+    const url = safeUrl(w.url);
+    return `<li><span class="n">${n + 1}</span>
+      <div><div class="w">${esc(w.what)}</div>${w.note ? `<div class="d">${esc(w.note)}</div>` : ""}</div>
+      <div class="r">${w.price != null && w.price !== "" ? `<span class="p">${money(w.price)}</span>` : ""}${url ? `<a class="btn ghost" href="${esc(url)}" target="_blank" rel="noopener">View at ${esc(host(url))}</a>` : ""}</div></li>`;
+  }).join("")}</ol>`;
+}
+show();
+</script>
+</body>
+</html>

@@ -76,8 +76,9 @@ function assignTo(it, value) {
 const forValue = (it) => (isAgeIdea(it) ? "a:" + it.age : it.person && personName(it.person) ? "p:" + it.person : "");
 
 // ---------- GitHub ----------
-async function gh(path, opts = {}) {
-  const res = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}${path}`, {
+const gh = (path, opts) => api(`/repos/${cfg.owner}/${cfg.repo}${path}`, opts);
+async function api(path, opts = {}) {
+  const res = await fetch(`https://api.github.com${path}`, {
     ...opts,
     cache: "no-store",
     headers: {
@@ -115,7 +116,8 @@ const setDirty = (on) => saved.set("gl_dirty", on ? "1" : "0");
 // Folds this device's copy into GitHub's: anything only here is added, and this device's version
 // wins for anything in both. Safe to run twice.
 function mergeInto(x, local) {
-  const defaults = { people: [], items: [], groups: DEFAULT_GROUPS, ages: DEFAULT_AGES };
+  const defaults = { people: [], items: [], groups: DEFAULT_GROUPS, ages: DEFAULT_AGES, wish: [] };
+  if (local.wishShare && !x.wishShare) x.wishShare = structuredClone(local.wishShare);
   for (const key of Object.keys(defaults)) {
     if (!local[key]) continue;
     x[key] ||= structuredClone(defaults[key]);
@@ -293,15 +295,26 @@ function itemRow(i, showWho, sortable) {
   const check = age
     ? "<span></span>"
     : `<button class="check" data-buy="${i.id}" aria-pressed="${done}" aria-label="${done ? "Bought. Tap to undo" : "Mark as bought"}" title="${done ? "Bought" : "Mark as bought"}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></button>`;
-  const grip = sortable
-    ? `<button class="grip" data-grip="${i.id}" aria-label="Move ${esc(i.what)}. Drag, or use the up and down arrow keys." title="Drag to reorder"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>`
-    : "";
+  const grip = sortable ? gripBtn(i) : "";
   return `<li class="item${sortable ? " sortable" : ""}${done && !age ? " done" : ""}" data-id="${i.id}">
     ${grip}${check}
     <div class="what"><button class="name" data-edit="${i.id}" title="Edit">${esc(i.what)}</button>${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
     <span class="price num">${i.price != null && i.price !== "" ? money(i.price) : ""}</span>
     <div class="acts">${age ? `<button class="chip give" data-give="${i.id}" title="Add to someone's list">Give</button>` : ""}<button class="xbtn" data-edit="${i.id}" aria-label="Edit ${esc(i.what)}" title="Edit, add a link, or delete">${PENCIL}</button></div>
     ${age && giveOpen === i.id ? giveBox(i) : ""}${linkBox(i)}</li>`;
+}
+const gripBtn = (i) => `<button class="grip" data-grip="${i.id}" aria-label="Move ${esc(i.what)}. Drag, or use the up and down arrow keys." title="Drag to reorder"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>`;
+
+// A row on your own wish list: no bought check, no link search
+function wishRow(w, sortable) {
+  const bits = [];
+  if (w.url) bits.push(`<a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(host(w.url))} ↗</a>`);
+  if (w.note) bits.push(esc(w.note));
+  return `<li class="item${sortable ? " sortable" : ""}" data-id="${w.id}">
+    ${sortable ? gripBtn(w) : ""}<span></span>
+    <div class="what"><button class="name" data-wishedit="${w.id}" title="Edit">${esc(w.what)}</button>${bits.length ? `<small>${bits.join(" · ")}</small>` : ""}</div>
+    <span class="price num">${w.price != null && w.price !== "" ? money(w.price) : ""}</span>
+    <div class="acts"><button class="xbtn" data-wishedit="${w.id}" aria-label="Edit ${esc(w.what)}" title="Edit or delete">${PENCIL}</button></div></li>`;
 }
 const PENCIL = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>`;
 
@@ -398,6 +411,23 @@ function draw() {
       <ul class="items">${todo.map((i) => itemRow(i, true)).join("") || "<li class='empty'>Everything is bought.</li>"}</ul></div>
       <div class="panel"><div class="phead"><h3>Already bought</h3><span class="budget num">${total} gift${total === 1 ? "" : "s"}</span></div>
       ${boughtBy.map(([p, its]) => `<h4 class="who"><span class="dot" style="--c:${colorOf(p)}"></span>${esc(p.name)}</h4><ul class="items">${its.map((i) => itemRow(i)).join("")}</ul>`).join("") || "<p class='empty'>Nothing bought yet. Tap the circle next to a gift to mark it bought.</p>"}</div>`;
+  } else if (view === "wish") {
+    const list = ranked(data.wish || []);
+    const share = data.wishShare || {};
+    const link = share.gist ? WISH_URL + share.gist : "";
+    const add = `<form class="panel" id="addWish"><h3>Add something you'd like</h3><div class="row" style="margin-top:8px">
+      <input id="newWish" placeholder="Wool socks, size M" aria-label="What you'd like"><input id="newWishLink" inputmode="url" autocomplete="off" placeholder="Link (optional)" aria-label="Link"><button class="btn">Add</button></div></form>`;
+    const items = `<div class="panel"><div class="phead"><h3>My wish list</h3><span class="budget num">${list.length} thing${list.length === 1 ? "" : "s"}</span></div>
+      <ul class="items" data-kind="wish">${list.map((w) => wishRow(w, list.length > 1)).join("") || "<li class='empty'>Nothing yet. Add what you'd like above.</li>"}</ul></div>`;
+    const shareBox = `<div class="panel"><h2>Share it</h2>
+      <p>People with the link see only this list, in this order. Nothing else from your Gift List.</p>
+      <label class="field">Title on the shared page<input id="wishTitle" value="${esc(share.title || "My wish list")}"></label>
+      ${link
+        ? `<div class="row" style="margin-top:10px"><input id="wishLink" readonly value="${esc(link)}" aria-label="Share link"><button class="btn" data-wishcopy="1">Copy link</button>${navigator.share ? `<button class="btn ghost" data-wishshare="1">Share</button>` : ""}</div>
+          <p class="meta" style="margin-top:8px">${esc(wishStatus || "The shared page updates on its own when you change your list.")} <a href="${esc(link)}" target="_blank" rel="noopener">Preview</a> · <button class="linkbtn" data-wishstop="1">Stop sharing</button></p>`
+        : `<div class="row" style="margin-top:10px"><button class="btn" data-wishmake="1">Make a share link</button></div>${wishStatus ? `<p class="meta" style="margin-top:8px">${esc(wishStatus)}</p>` : ""}`}
+    </div>`;
+    v.innerHTML = add + items + shareBox;
   } else {
     const mark = `javascript:void(open('${APP_URL}?title='+encodeURIComponent(document.title)+'&url='+encodeURIComponent(location.href)))`;
     v.innerHTML = `
@@ -448,7 +478,7 @@ function draw() {
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson]");
+  const t = e.target.closest("[data-view],[data-buy],[data-find],[data-file],[data-drop],[data-use],[data-more],[data-paste],[data-pastesave],[data-edit],[data-unperson],[data-give],[data-givesave],[data-unage],[data-group],[data-gcolor],[data-ungroup],[data-addfor],[data-export],[data-editperson],[data-wishedit],[data-wishmake],[data-wishcopy],[data-wishshare],[data-wishstop]");
   if (!t) return;
   const d = t.dataset;
   if (d.view) { view = d.view; render(); }
@@ -540,6 +570,17 @@ document.addEventListener("click", (e) => {
     commit("Delete idea", (x) => { x.items = x.items.filter((i) => i.id !== d.drop); });
   } else if (d.edit) openEdit(d.edit);
   else if (d.addfor) openCapture(false, d.addfor);
+  else if (d.wishedit) openWish(d.wishedit);
+  else if (d.wishmake) makeWishLink();
+  else if (d.wishstop) stopWishLink();
+  else if (d.wishcopy) {
+    const url = $("wishLink").value;
+    (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+      .then(() => toast("Link copied"))
+      .catch(() => { $("wishLink").select(); toast("Press Ctrl+C to copy"); });
+  } else if (d.wishshare) {
+    navigator.share({ title: data.wishShare?.title || "My wish list", url: $("wishLink").value }).catch(() => {});
+  }
   else if (d.editperson) openPerson(d.editperson);
   else if (d.unperson) {
     const n = data.items.filter((i) => i.person === d.unperson).length;
@@ -562,6 +603,15 @@ document.addEventListener("submit", async (e) => {
     input.value = "";
     if (!data.ages) commit("Save age lists", (x) => { x.ages ||= structuredClone(DEFAULT_AGES); });
     addIdea(what, { age });
+  } else if (e.target.id === "addWish") {
+    e.preventDefault();
+    const what = $("newWish").value.trim();
+    if (!what) { $("newWish").focus(); return; }
+    const w = { id: newId(), what, url: fixUrl($("newWishLink").value), price: null, note: "", created: new Date().toISOString() };
+    $("newWish").value = "";
+    $("newWishLink").value = "";
+    commit("Add to wish list", (x) => { x.wish ||= []; if (!x.wish.some((y) => y.id === w.id)) x.wish.push(w); });
+    publishSoon();
   } else if (e.target.id === "addAge") {
     e.preventDefault();
     const text = $("newAge").value.trim();
@@ -781,7 +831,9 @@ $("editForm").addEventListener("submit", (e) => {
 // Saves the order of a list's rows as each idea's rank
 function saveOrder(list) {
   const ids = [...list.querySelectorAll(":scope > .item[data-id]")].map((li) => li.dataset.id);
-  commit("Reorder ideas", (x) => ids.forEach((id, rank) => { const it = byId(x, id); if (it) it.rank = rank; }));
+  const wish = list.dataset.kind === "wish";
+  commit("Reorder ideas", (x) => ids.forEach((id, rank) => { const it = wish ? x.wish?.find((w) => w.id === id) : byId(x, id); if (it) it.rank = rank; }));
+  if (wish) publishSoon();
 }
 
 // Drag by the grip with a finger or mouse; the row moves live as you pass other rows
@@ -877,6 +929,12 @@ document.addEventListener("change", async (e) => {
     }
     return;
   }
+  if (e.target.id === "wishTitle") {
+    const title = e.target.value.trim() || "My wish list";
+    commit("Rename wish list", (x) => { x.wishShare = { ...(x.wishShare || {}), title }; });
+    publishSoon();
+    return;
+  }
   const id = e.target.dataset?.persongroup;
   if (!id) return;
   const group = e.target.value || null;
@@ -888,6 +946,103 @@ document.addEventListener("keydown", (e) => {
   if (!$("captureScrim").hidden) closeCapture();
   if (!$("editScrim").hidden) closeEdit();
   if (!$("personScrim").hidden) closePerson();
+  if (!$("wishScrim").hidden) closeWish();
+});
+
+// ---------- wish list ----------
+// Your own list, shared through a secret GitHub gist that the separate wish.html page reads.
+// The gist only ever holds this list, so people with the link can't see anything else.
+const WISH_URL = APP_URL + "wish.html?g=";
+const fixUrl = (u) => { u = u.trim(); return !u ? null : /^https?:\/\//i.test(u) ? u : "https://" + u; };
+const GIST_HELP = "Your GitHub token needs Gists access. On GitHub go to Settings, Developer settings, Fine-grained tokens, open your token, and under Account permissions set Gists to Read and write. Then try again.";
+let wishStatus = "";
+const wishFile = (d) => JSON.stringify({
+  title: d.wishShare?.title || "My wish list",
+  updated: new Date().toISOString(),
+  items: ranked(d.wish || []).map((w) => ({ what: w.what, url: w.url || null, price: w.price ?? null, note: w.note || "" })),
+}, null, 2);
+
+async function makeWishLink() {
+  if (!cfg.token) { toast("Connect GitHub in Settings first"); return; }
+  const title = $("wishTitle")?.value.trim() || "My wish list";
+  wishStatus = "Making your link…";
+  render();
+  try {
+    const g = await api("/gists", { method: "POST", body: JSON.stringify({ description: "Wish list", public: false, files: { "wishlist.json": { content: wishFile({ ...data, wishShare: { title } }) } } }) });
+    wishStatus = "";
+    commit("Share wish list", (x) => { x.wishShare = { ...(x.wishShare || {}), title, gist: g.id }; });
+    toast("Your share link is ready");
+  } catch (e) {
+    wishStatus = e.status === 401 || e.status === 403 || e.status === 404 ? GIST_HELP : "Couldn't reach GitHub. Try again in a moment.";
+    renderSoon();
+  }
+}
+
+async function stopWishLink() {
+  const gist = data.wishShare?.gist;
+  if (!gist || !confirm("Stop sharing? The link will stop working for everyone you sent it to.")) return;
+  try { await api(`/gists/${gist}`, { method: "DELETE" }); } catch (e) {
+    if (e.status !== 404) { toast(e.status === 403 ? GIST_HELP : "Couldn't reach GitHub. Try again in a moment."); return; }
+  }
+  wishStatus = "";
+  commit("Stop sharing wish list", (x) => { if (x.wishShare) delete x.wishShare.gist; });
+  toast("Sharing stopped");
+}
+
+// Pushes the list to the shared page a moment after the last change, once it's saved
+let pubTimer = null;
+function publishSoon() {
+  if (!data.wishShare?.gist || !cfg.token) return;
+  clearTimeout(pubTimer);
+  pubTimer = setTimeout(async () => {
+    await saveQueue;
+    const gist = data.wishShare?.gist;
+    if (!gist) return;
+    try {
+      await api(`/gists/${gist}`, { method: "PATCH", body: JSON.stringify({ files: { "wishlist.json": { content: wishFile(data) } } }) });
+      wishStatus = "";
+    } catch (e) {
+      wishStatus = e.status === 403 || e.status === 404 ? "The shared page didn't update. " + GIST_HELP : "The shared page didn't update. It'll try again on your next change.";
+      toast("Your shared wish list didn't update");
+    }
+    if (view === "wish") renderSoon();
+  }, 1200);
+}
+
+let editingWish = null;
+function openWish(id) {
+  const w = data.wish?.find((y) => y.id === id);
+  if (!w) return;
+  editingWish = id;
+  $("wishWhat").value = w.what;
+  $("wishUrl").value = w.url || "";
+  $("wishPrice").value = w.price ?? "";
+  $("wishNote").value = w.note || "";
+  $("wishScrim").hidden = false;
+}
+const closeWish = () => { $("wishScrim").hidden = true; editingWish = null; };
+$("wishCancel").onclick = closeWish;
+$("wishScrim").addEventListener("click", (e) => { if (e.target.id === "wishScrim") closeWish(); });
+$("wishDelete").onclick = () => {
+  const id = editingWish;
+  if (!confirm(`Delete "${data.wish?.find((w) => w.id === id)?.what}"?`)) return;
+  closeWish();
+  commit("Delete from wish list", (x) => { x.wish = (x.wish || []).filter((w) => w.id !== id); });
+  publishSoon();
+};
+$("wishForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = editingWish;
+  const priceText = $("wishPrice").value.replace(/[$,\s]/g, "");
+  const fields = {
+    what: $("wishWhat").value.trim(),
+    url: fixUrl($("wishUrl").value),
+    price: priceText === "" || isNaN(+priceText) ? null : +priceText,
+    note: $("wishNote").value.trim(),
+  };
+  closeWish();
+  commit("Edit wish list", (x) => { const w = x.wish?.find((y) => y.id === id); if (w) Object.assign(w, fields); });
+  publishSoon();
 });
 
 let toastTimer;
